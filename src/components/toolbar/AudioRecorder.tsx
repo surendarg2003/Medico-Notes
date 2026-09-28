@@ -275,8 +275,8 @@ function AudioRecorder({ notebookId, notebookTitle }: Props) {
     }
   }
 
-  return <div className="audio-recorder" ref={audioContainerRef}>
-    <button className={`toolbar-button ${isRecording ? 'toolbar-button-active' : ''}`} aria-label={isRecording ? 'Stop audio recording' : 'Record audio'} title={isRecording ? `Stop recording (${formatTime(elapsed)})` : 'Record audio'} onClick={() => { if (isRecording) stopRecording(); else void startRecording() }} disabled={!notebookId}>
+  return <div className={`audio-recorder${isRecording ? ' is-recording' : ''}`} ref={audioContainerRef}>
+    <button className={`toolbar-button ${isRecording ? 'toolbar-button-active' : ''}`} aria-label={isRecording ? 'Stop audio recording' : 'Record audio'} title={isRecording ? 'Stop recording' : 'Record audio'} onClick={() => { if (isRecording) stopRecording(); else void startRecording() }} disabled={!notebookId}>
       {isRecording ? <Square size={17} fill="currentColor" /> : <Mic size={18} />}
     </button>
     {isRecording && <span className="audio-timer">{formatTime(elapsed)}</span>}
