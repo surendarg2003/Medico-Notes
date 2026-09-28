@@ -59,6 +59,13 @@ interface TextDragState {
   offsetY: number
 }
 
+interface StickyDragState {
+  pointerId: number
+  startPointer: Point
+  currentPointer: Point
+  sticky: StickyNoteElement
+}
+
 type ImageCropEdge = 'left' | 'right' | 'top' | 'bottom'
 
 type ResizeHandle =
@@ -920,6 +927,8 @@ function NoteCanvas({
   const currentPointsRef = useRef<Point[]>([])
 
   const textDragRef = useRef<TextDragState | null>(null)
+  const stickyDragRef = useRef<StickyDragState | null>(null)
+  const stickyDragFrameRef = useRef<number | null>(null)
   const shapeDrawRef = useRef<ShapeDrawState | null>(null)
   const shapeDragRef = useRef<ShapeDragState | null>(null)
   const multiShapeDragRef = useRef<{
@@ -945,6 +954,7 @@ function NoteCanvas({
   const selectionRotateRef = useRef<SelectionRotateState | null>(null)
 
   const [isDrawing, setIsDrawing] = useState(false)
+  const [isStickyDragging, setIsStickyDragging] = useState(false)
   const [selectedElementIds, setSelectedElementIds] = useState<string[]>([])
   const [selectionPreview, setSelectionPreview] = useState<{ kind: 'move' | 'marquee'; x: number; y: number; width: number; height: number } | null>(null)
   const [lassoPreview, setLassoPreview] = useState<Point[]>([])
@@ -1521,6 +1531,10 @@ function NoteCanvas({
     }
 
     for (const element of page.elements) {
+      if (stickyDragRef.current?.sticky.id === element.id) {
+        continue
+      }
+
       const selectionTransformPreview = selectionScalePreview
       const rotationPreview = selectionRotationPreview
       const isSelectionRotationPreview = (activeTool === 'select' || activeTool === 'lasso') && rotationPreview && selectedElementIds.includes(element.id)
@@ -1719,6 +1733,77 @@ function NoteCanvas({
     }
   }
 
+  const drawStickyDragPreview = () => {
+    const drag = stickyDragRef.current
+    const context = liveInkCanvasRef.current?.getContext('2d')
+    if (!drag || !context) return
+
+    context.clearRect(0, 0, width, height)
+    const deltaX = drag.currentPointer.x - drag.startPointer.x
+    const deltaY = drag.currentPointer.y - drag.startPointer.y
+    const x = Math.max(0, Math.min(width - drag.sticky.width, drag.sticky.x + deltaX))
+    const y = Math.max(0, Math.min(height - drag.sticky.height, drag.sticky.y + deltaY))
+    drawStickyNote(context, { ...drag.sticky, x, y })
+  }
+
+  const scheduleStickyDragPreview = () => {
+    if (stickyDragFrameRef.current !== null) return
+    stickyDragFrameRef.current = requestAnimationFrame(() => {
+      stickyDragFrameRef.current = null
+      drawStickyDragPreview()
+    })
+  }
+
+  const finishStickyDrag = (event: PointerEvent<HTMLCanvasElement>): boolean => {
+    const drag = stickyDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return false
+
+    if (stickyDragFrameRef.current !== null) {
+      cancelAnimationFrame(stickyDragFrameRef.current)
+      stickyDragFrameRef.current = null
+    }
+
+    drag.currentPointer = getPointFromClient(event.clientX, event.clientY)
+    const deltaX = drag.currentPointer.x - drag.startPointer.x
+    const deltaY = drag.currentPointer.y - drag.startPointer.y
+    if (Math.hypot(deltaX, deltaY) > 1) {
+      useDocumentStore.setState((state) => {
+        if (!state.notebook) return state
+        const previousNotebook = state.notebook
+        const x = Math.max(0, Math.min(width - drag.sticky.width, drag.sticky.x + deltaX))
+        const y = Math.max(0, Math.min(height - drag.sticky.height, drag.sticky.y + deltaY))
+        const pages = previousNotebook.pages.map((pageItem) =>
+          pageItem.id !== pageId
+            ? pageItem
+            : {
+                ...pageItem,
+                elements: pageItem.elements.map((element) =>
+                  element.type === 'sticky-note' && element.id === drag.sticky.id
+                    ? { ...element, x, y }
+                    : element,
+                ),
+              },
+        )
+        return {
+          notebook: { ...previousNotebook, pages, updatedAt: Date.now() },
+          history: [...state.history, previousNotebook],
+          future: [],
+        }
+      })
+    }
+
+    stickyDragRef.current = null
+    selectionActionRef.current = null
+    setSelectionPreview(null)
+    setIsStickyDragging(false)
+    const context = liveInkCanvasRef.current?.getContext('2d')
+    context?.clearRect(0, 0, width, height)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    return true
+  }
+
   useEffect(() => {
     const canvas = canvasRef.current
     const liveCanvas = liveInkCanvasRef.current
@@ -1809,6 +1894,7 @@ function NoteCanvas({
     selectionRotationPreview,
     audioSyncTimestamp,
     imageCropDraft,
+    isStickyDragging,
   ])
 
   useEffect(() => {
@@ -2665,6 +2751,21 @@ function NoteCanvas({
         setSelectedElementIds(nextSelection)
         selectionActionRef.current = { kind: 'move', start: point, current: point }
         setSelectionPreview(null)
+        if (
+          activeTool === 'select' &&
+          hit.type === 'sticky-note' &&
+          nextSelection.length === 1 &&
+          nextSelection[0] === hit.id
+        ) {
+          stickyDragRef.current = {
+            pointerId: event.pointerId,
+            startPointer: point,
+            currentPointer: point,
+            sticky: hit,
+          }
+          setIsStickyDragging(true)
+          drawStickyDragPreview()
+        }
       } else {
         if (!event.shiftKey) setSelectedElementIds([])
         const kind = activeTool === 'lasso' ? 'lasso' : 'marquee'
@@ -2895,6 +2996,12 @@ function NoteCanvas({
     event: PointerEvent<HTMLCanvasElement>,
   ) => {
     if (activePageId !== pageId) {
+      return
+    }
+
+    if (stickyDragRef.current?.pointerId === event.pointerId) {
+      stickyDragRef.current.currentPointer = getPointFromClient(event.clientX, event.clientY)
+      scheduleStickyDragPreview()
       return
     }
 
@@ -4330,6 +4437,8 @@ function NoteCanvas({
   const stopDrawing = (
     event: PointerEvent<HTMLCanvasElement>,
   ) => {
+    if (finishStickyDrag(event)) return
+
     if (eraserPointerIdRef.current === event.pointerId) {
       eraserPendingPointsRef.current.push(
         getPointFromClient(event.clientX, event.clientY),
@@ -5505,7 +5614,7 @@ function NoteCanvas({
         </>
       })()}
 
-      {(activeTool === 'select' || activeTool === 'lasso') && selectedBounds && !imageCropDraft && <div
+      {(activeTool === 'select' || activeTool === 'lasso') && selectedBounds && !imageCropDraft && !isStickyDragging && <div
         className="element-selection-outline"
         style={{ left: `${(selectedBounds.x + selectionMoveDelta.x) / width * 100}%`, top: `${(selectedBounds.y + selectionMoveDelta.y) / height * 100}%`, width: `${selectedBounds.width * (selectionScalePreview?.scaleX ?? 1) / width * 100}%`, height: `${selectedBounds.height * (selectionScalePreview?.scaleY ?? 1) / height * 100}%`, transform: `rotate(${selectionRotationPreview?.degrees ?? 0}deg)` }}
       >
@@ -5555,7 +5664,7 @@ function NoteCanvas({
           </div>
         </div>
       })()}
-      {(activeTool === 'select' || activeTool === 'lasso') && selectedElements.some((element) => element.type === 'sticky-note') && !stickyEditing && <div className="sticky-note-hint">
+      {(activeTool === 'select' || activeTool === 'lasso') && selectedElements.some((element) => element.type === 'sticky-note') && !stickyEditing && !isStickyDragging && <div className="sticky-note-hint">
         Double-click the sticky note to edit · Enter adds a line · Done saves
       </div>}
       {activeTool === 'select' && selectionPreview?.kind === 'marquee' && <div
