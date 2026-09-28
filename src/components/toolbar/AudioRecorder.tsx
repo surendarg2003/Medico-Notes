@@ -275,17 +275,65 @@ function AudioRecorder({ notebookId, notebookTitle }: Props) {
     }
   }
 
+  const toggleAudioPanel = () => {
+    if (!isOpen) window.dispatchEvent(new Event('freenotes-close-search'))
+    setIsOpen(!isOpen)
+  }
+
+  const previousRecordings = [...recordings].sort((left, right) => right.createdAt - left.createdAt)
+
   return <div className={`audio-recorder${isRecording ? ' is-recording' : ''}`} ref={audioContainerRef}>
-    <button className={`toolbar-button ${isRecording ? 'toolbar-button-active' : ''}`} aria-label={isRecording ? 'Stop audio recording' : 'Record audio'} title={isRecording ? 'Stop recording' : 'Record audio'} onClick={() => { if (isRecording) stopRecording(); else void startRecording() }} disabled={!notebookId}>
-      {isRecording ? <Square size={17} fill="currentColor" /> : <Mic size={18} />}
+    <button
+      className="toolbar-button"
+      aria-label="Audio recordings"
+      aria-expanded={isOpen}
+      aria-controls="audio-recordings-popover"
+      title="Audio recordings"
+      onClick={toggleAudioPanel}
+      disabled={!notebookId}
+    >
+      <Mic size={18} />
     </button>
-    {isRecording && <span className="audio-timer">{formatTime(elapsed)}</span>}
-    {isOpen && <div className="audio-popover">
-      <div className="audio-popover-header"><strong>{notebookTitle} audio</strong><div className="audio-popover-actions"><button className="icon-button" aria-label="Import audio file" title="Import audio file" onClick={() => audioFileInputRef.current?.click()}><FileUp size={16} /></button><button className="icon-button" aria-label="Close recordings" onClick={() => setIsOpen(false)}><X size={16} /></button></div></div>
+    {isRecording && <span className="audio-timer" aria-label={`Recording duration ${formatTime(elapsed)}`}>{formatTime(elapsed)}</span>}
+    {isOpen && <div className="audio-popover" id="audio-recordings-popover" role="dialog" aria-label={`${notebookTitle} audio recordings`}>
+      <div className="audio-popover-header">
+        <strong>{notebookTitle} audio</strong>
+        <div className="audio-popover-actions">
+          <button className="icon-button" aria-label="Import audio file" title="Import audio file" onClick={() => audioFileInputRef.current?.click()}><FileUp size={16} /></button>
+          <button className="icon-button" aria-label="Close recordings" onClick={() => setIsOpen(false)}><X size={16} /></button>
+        </div>
+      </div>
       <input ref={audioFileInputRef} type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.oga,.ogg,.opus,.webm,.flac,.aiff,.aif" hidden onChange={(event) => { void importAudioFile(event.currentTarget.files?.[0]); event.currentTarget.value = '' }} />
       {error && <p className="audio-error" role="alert">{error}</p>}
-      {isRecording && <div className="recording-status"><span className="recording-dot" /> Recording · {formatTime(elapsed)} <button onClick={stopRecording}>Stop</button></div>}
-      {recordings.length === 0 && !isRecording ? <p className="audio-empty">No recordings for this notebook yet.</p> : recordings.map((recording) => <div className="audio-recording" key={recording.id}>
+
+      <div className={`recorder-control${isRecording ? ' is-recording' : ''}`}>
+        <div className="recorder-control-copy">
+          {isRecording && <span className="recording-dot" />}
+          <span>
+            <strong>{isRecording ? 'Recording in progress' : 'Ready to record'}</strong>
+            <small>{isRecording ? `Recording audio · ${formatTime(elapsed)}` : 'Start a new audio recording'}</small>
+          </span>
+        </div>
+        <button
+          type="button"
+          className={`record-action-button${isRecording ? ' is-recording' : ''}`}
+          aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+          onClick={() => { if (isRecording) stopRecording(); else void startRecording() }}
+          disabled={!notebookId}
+        >
+          {isRecording ? <Square size={14} fill="currentColor" /> : <Mic size={15} />}
+          {isRecording ? 'Stop' : 'Record'}
+        </button>
+      </div>
+
+      <div className="audio-recordings-section">
+        <div className="audio-recordings-heading">
+          <strong>Previous recordings</strong>
+          <span>{previousRecordings.length}</span>
+        </div>
+        {previousRecordings.length === 0
+          ? <p className="audio-empty">No previous recordings yet.</p>
+          : previousRecordings.map((recording) => <div className="audio-recording" key={recording.id}>
         <div className="audio-recording-title"><span>{recording.title}</span><small>{new Date(recording.createdAt).toLocaleDateString()}</small></div>
         <audio
           controls
@@ -324,6 +372,7 @@ function AudioRecorder({ notebookId, notebookTitle }: Props) {
         <button className="icon-button" aria-label={`Download ${recording.title}`} title="Download recording" onClick={() => downloadRecording(recording)}><Download size={15} /></button>
         <button className="icon-button danger-icon" aria-label={`Delete ${recording.title}`} title="Delete recording" onClick={() => void removeRecording(recording)}><Trash2 size={15} /></button>
       </div>)}
+      </div>
       <p className="audio-note">Recordings are saved in this browser on this device.</p>
     </div>}
   </div>

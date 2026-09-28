@@ -229,8 +229,7 @@ textarea {
 }
 
 .audio-popover-header,
-.audio-recording,
-.recording-status {
+.audio-recording {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -293,19 +292,109 @@ textarea {
   font: inherit;
 }
 
-.recording-status {
-  padding: 10px 0;
-  color: #a33;
-  font-size: 13px;
+.recorder-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 14px;
+  padding: 11px 12px;
+  border: 1px solid #e4e4e7;
+  border-radius: 10px;
+  background: #fafafa;
 }
 
-.recording-status button {
-  margin-left: auto;
-  padding: 6px 10px;
-  border: 1px solid #ddd;
-  border-radius: 7px;
-  background: white;
+.recorder-control.is-recording {
+  border-color: #f0d3d3;
+  background: #fff8f8;
+}
+
+.recorder-control-copy {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.recorder-control-copy > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.recorder-control-copy strong {
+  color: #292a2d;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.recorder-control-copy small {
+  color: #777980;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.record-action-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #222326;
+  border-radius: 8px;
+  background: #222326;
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+
+.record-action-button:hover {
+  background: #37383b;
+}
+
+.record-action-button:active {
+  transform: scale(0.97);
+}
+
+.record-action-button.is-recording {
+  border-color: #b9383e;
+  background: #b9383e;
+}
+
+.record-action-button.is-recording:hover {
+  background: #a72d33;
+}
+
+.audio-recordings-section {
+  border-top: 1px solid #ededee;
+}
+
+.audio-recordings-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 1px 3px;
+  color: #343539;
+  font-size: 12px;
+}
+
+.audio-recordings-heading > span {
+  display: inline-grid;
+  min-width: 21px;
+  height: 21px;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #f0f0f2;
+  color: #686a70;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .recording-dot {
