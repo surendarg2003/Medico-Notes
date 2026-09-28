@@ -4912,45 +4912,45 @@ function NoteCanvas({
     CSSProperties
   > = {
     'top-left': {
-      left: '-5px',
-      top: '-5px',
+      left: '-12px',
+      top: '-12px',
       cursor: 'nwse-resize',
     },
     top: {
       left: '50%',
-      top: '-5px',
+      top: '-12px',
       transform: 'translateX(-50%)',
       cursor: 'ns-resize',
     },
     'top-right': {
-      right: '-5px',
-      top: '-5px',
+      right: '-12px',
+      top: '-12px',
       cursor: 'nesw-resize',
     },
     right: {
-      right: '-5px',
+      right: '-12px',
       top: '50%',
       transform: 'translateY(-50%)',
       cursor: 'ew-resize',
     },
     'bottom-right': {
-      right: '-5px',
-      bottom: '-5px',
+      right: '-12px',
+      bottom: '-12px',
       cursor: 'nwse-resize',
     },
     bottom: {
       left: '50%',
-      bottom: '-5px',
+      bottom: '-12px',
       transform: 'translateX(-50%)',
       cursor: 'ns-resize',
     },
     'bottom-left': {
-      left: '-5px',
-      bottom: '-5px',
+      left: '-12px',
+      bottom: '-12px',
       cursor: 'nesw-resize',
     },
     left: {
-      left: '-5px',
+      left: '-12px',
       top: '50%',
       transform: 'translateY(-50%)',
       cursor: 'ew-resize',
@@ -6061,56 +6061,42 @@ function NoteCanvas({
 
               <>
                 {resizeHandles.map((handle) => (
-                    <div
-                      key={handle}
-                      onPointerDown={(event) =>
-                        startShapeResize(
-                          event,
-                          selectedShape,
-                          handle,
-                        )
+                  <div
+                    key={handle}
+                    className="canvas-resize-handle"
+                    onPointerDown={(event) =>
+                      startShapeResize(event, selectedShape, handle)
+                    }
+                    onPointerMove={(event) => {
+                      if (
+                        shapeResizeRef.current &&
+                        shapeResizeRef.current.shapeId === selectedShape.id
+                      ) {
+                        handleShapeResizeMove(event)
                       }
-                      onPointerMove={(event) => {
-                        if (
-                          shapeResizeRef.current &&
-                          shapeResizeRef.current.shapeId ===
-                            selectedShape.id
-                        ) {
-                          handleShapeResizeMove(event)
-                        }
-                      }}
-                      onPointerUp={(event) => {
-                        if (
-                          shapeResizeRef.current &&
-                          shapeResizeRef.current.shapeId ===
-                            selectedShape.id
-                        ) {
-                          commitShapeResize()
-                        }
+                    }}
+                    onPointerUp={(event) => {
+                      if (
+                        shapeResizeRef.current &&
+                        shapeResizeRef.current.shapeId === selectedShape.id
+                      ) {
+                        commitShapeResize()
+                      }
 
-                        if (
-                          event.currentTarget.hasPointerCapture(
-                            event.pointerId,
-                          )
-                        ) {
-                          event.currentTarget.releasePointerCapture(
-                            event.pointerId,
-                          )
-                        }
-                      }}
-                      onPointerCancel={cancelShapeResize}
-                      style={{
-                        position: 'absolute',
-                        width: '10px',
-                        height: '10px',
-                        border: '1px solid #55555c',
-                        borderRadius: '2px',
-                        background: '#ffffff',
-                        pointerEvents: 'auto',
-                        boxSizing: 'border-box',
-                        ...resizeHandleStyles[handle],
-                      }}
-                    />
+                      if (
+                        event.currentTarget.hasPointerCapture(event.pointerId)
+                      ) {
+                        event.currentTarget.releasePointerCapture(event.pointerId)
+                      }
+                    }}
+                    onPointerCancel={cancelShapeResize}
+                    style={{
+                      position: 'absolute',
+                      pointerEvents: 'auto',
+                      boxSizing: 'border-box',
+                      ...resizeHandleStyles[handle],
+                    }}
+                  />
                 ))}
               </>
 
@@ -6198,6 +6184,7 @@ function NoteCanvas({
             {resizeHandles.map((handle) => (
               <div
                 key={handle}
+                className="canvas-resize-handle"
                 onPointerDown={(event) =>
                   startTextResize(
                     event,
@@ -6239,12 +6226,8 @@ function NoteCanvas({
                 }}
                 style={{
                   position: 'absolute',
-                  width: '10px',
-                  height: '10px',
-                  border: '1px solid #55555c',
-                  borderRadius: '2px',
-                  background: '#ffffff',
                   pointerEvents: 'auto',
+                  boxSizing: 'border-box',
                   ...resizeHandleStyles[handle],
                 }}
               />
