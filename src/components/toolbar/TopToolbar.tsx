@@ -73,11 +73,14 @@ function TopToolbar() {
     const syncFullscreenState = () => {
       const nativeFullscreen = document.fullscreenElement === document.documentElement
       if (nativeFullscreen) document.documentElement.classList.remove('app-fullscreen-fallback')
-      setIsFullscreen(nativeFullscreen || document.documentElement.classList.contains('app-fullscreen-fallback'))
+      const fullscreen = nativeFullscreen || document.documentElement.classList.contains('app-fullscreen-fallback')
+      document.documentElement.classList.toggle('app-note-focus', fullscreen)
+      setIsFullscreen(fullscreen)
     }
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !document.fullscreenElement) {
         document.documentElement.classList.remove('app-fullscreen-fallback')
+        document.documentElement.classList.remove('app-note-focus')
         setIsFullscreen(false)
       }
     }
@@ -96,6 +99,7 @@ function TopToolbar() {
         await document.exitFullscreen()
       } else {
         document.documentElement.classList.remove('app-fullscreen-fallback')
+        document.documentElement.classList.remove('app-note-focus')
         setIsFullscreen(false)
       }
       return
@@ -105,6 +109,8 @@ function TopToolbar() {
       try {
         await document.documentElement.requestFullscreen()
         document.documentElement.classList.remove('app-fullscreen-fallback')
+        document.documentElement.classList.add('app-note-focus')
+        setIsFullscreen(true)
         return
       } catch {
         // Fall back to an app-sized view in browsers that deny fullscreen.
@@ -112,6 +118,7 @@ function TopToolbar() {
     }
 
     document.documentElement.classList.add('app-fullscreen-fallback')
+    document.documentElement.classList.add('app-note-focus')
     setIsFullscreen(true)
   }
 

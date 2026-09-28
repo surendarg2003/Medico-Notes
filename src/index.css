@@ -873,6 +873,121 @@ html.app-fullscreen-fallback .app-shell {
   height: 100dvh;
 }
 
+/* Focus mode keeps the drawing controls, while giving the current page the screen. */
+html.app-note-focus,
+html.app-note-focus body,
+html.app-note-focus #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+html.app-note-focus .app-shell {
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+}
+
+html.app-note-focus .sidebar,
+html.app-note-focus .page-navigator {
+  display: none !important;
+}
+
+html.app-note-focus .app-main,
+html.app-note-focus .workspace {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+html.app-note-focus .workspace {
+  overflow: hidden;
+}
+
+html.app-note-focus .page-panel {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+}
+
+html.app-note-focus .note-page {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+html.app-note-focus .note-page-header {
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 6px 14px;
+}
+
+html.app-note-focus .note-page-content {
+  flex: 1 1 auto;
+  height: 0;
+  min-height: 0;
+}
+
+html.app-note-focus .note-canvas-container,
+html.app-note-focus .note-canvas {
+  height: 100%;
+  min-height: 0;
+}
+
+html.app-note-focus .page-action-buttons {
+  display: none;
+}
+
+html.app-note-focus .top-toolbar {
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+html.app-note-focus .top-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+html.app-note-focus .toolbar-left,
+html.app-note-focus .toolbar-right {
+  flex: 0 0 auto;
+}
+
+html.app-fullscreen-fallback .app-shell {
+  height: 100vh;
+  height: 100dvh;
+}
+
+@media (max-width: 700px) {
+  html.app-note-focus .top-toolbar {
+    justify-content: flex-start;
+    gap: 8px;
+    height: 54px;
+    flex-basis: 54px;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  html.app-note-focus .toolbar-left,
+  html.app-note-focus .toolbar-right {
+    gap: 3px;
+  }
+
+  html.app-note-focus .note-page-header {
+    min-height: 38px;
+    padding: 4px 10px;
+  }
+}
+
 /* =========================================================
    DRAWING TOOLS
    ========================================================= */
