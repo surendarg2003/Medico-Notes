@@ -47,9 +47,12 @@ export const useToolStore = create<ToolState>((set) => ({
   rulerVisible: false,
 
   setActiveTool: (tool) =>
-    set({
+    set((state) => ({
       activeTool: tool,
-    }),
+      // The laser pointer and ruler are separate overlays. They must not
+      // remain active together when switching between these controls.
+      rulerVisible: tool === 'laser' ? false : state.rulerVisible,
+    })),
 
   setShapeType: (shape) =>
     set({
@@ -77,5 +80,12 @@ export const useToolStore = create<ToolState>((set) => ({
     }),
 
   setAutoShapeRecognition: (enabled) => set({ autoShapeRecognition: enabled }),
-  setRulerVisible: (visible) => set({ rulerVisible: visible }),
+  setRulerVisible: (visible) =>
+    set((state) => ({
+      rulerVisible: visible,
+      activeTool:
+        visible && state.activeTool === 'laser'
+          ? 'pen'
+          : state.activeTool,
+    })),
 }))
