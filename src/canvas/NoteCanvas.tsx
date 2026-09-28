@@ -6,7 +6,20 @@ import {
   type PointerEvent,
   type CSSProperties,
 } from 'react'
-import { FileDown, FileUp, ImagePlus, Loader2 } from 'lucide-react'
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  Bold,
+  Check,
+  FileDown,
+  FileUp,
+  ImagePlus,
+  Italic,
+  Loader2,
+  Underline,
+  X,
+} from 'lucide-react'
 import { useDocumentStore } from '../stores/documentStore'
 import { usePageStore } from '../stores/pageStore'
 import { useToolStore } from '../stores/toolStore'
@@ -18,6 +31,7 @@ import type {
   TextElement,
   Page,
   NoteElement,
+  Notebook,
   StickyNoteElement,
 } from '../types/document'
 
@@ -140,56 +154,65 @@ function drawStroke(
     return
   }
 
+  context.save()
   context.beginPath()
 
-  const firstPoint = points[0]
-
   if (points.length === 1) {
-    context.arc(
-      firstPoint.x,
-      firstPoint.y,
-      stroke.width / 2,
-      0,
-      Math.PI * 2,
-    )
-
+    context.arc(points[0].x, points[0].y, stroke.width / 2, 0, Math.PI * 2)
     context.fillStyle = stroke.color
     context.globalAlpha = stroke.opacity
     context.fill()
-    context.globalAlpha = 1
-
+    context.restore()
     return
   }
 
-  context.moveTo(firstPoint.x, firstPoint.y)
-
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const current = points[index]
-    const next = points[index + 1]
-
-    const midpointX = (current.x + next.x) / 2
-    const midpointY = (current.y + next.y) / 2
-
-    context.quadraticCurveTo(
-      current.x,
-      current.y,
-      midpointX,
-      midpointY,
-    )
-  }
-
-  const lastPoint = points[points.length - 1]
-
-  context.lineTo(lastPoint.x, lastPoint.y)
-
+  traceSmoothStroke(context, points)
   context.strokeStyle = stroke.color
   context.lineWidth = stroke.width
   context.globalAlpha = stroke.opacity
   context.lineCap = 'round'
   context.lineJoin = 'round'
   context.stroke()
+  context.restore()
+}
 
-  context.globalAlpha = 1
+function traceSmoothStroke(
+  context: CanvasRenderingContext2D,
+  points: Point[],
+) {
+  const filteredPoints = points.length < 3
+    ? points
+    : points.map((point, index) => {
+        if (index === 0 || index === points.length - 1) return point
+        const previous = points[index - 1]
+        const next = points[index + 1]
+        return {
+          ...point,
+          x: previous.x * 0.18 + point.x * 0.64 + next.x * 0.18,
+          y: previous.y * 0.18 + point.y * 0.64 + next.y * 0.18,
+        }
+      })
+
+  const first = filteredPoints[0]
+  context.moveTo(first.x, first.y)
+
+  for (let index = 0; index < filteredPoints.length - 1; index += 1) {
+    const previous = filteredPoints[Math.max(0, index - 1)]
+    const start = filteredPoints[index]
+    const end = filteredPoints[index + 1]
+    const next = filteredPoints[Math.min(filteredPoints.length - 1, index + 2)]
+
+    // Catmull-Rom control points keep the curve flowing through the real
+    // stylus samples without sharp direction changes between samples.
+    context.bezierCurveTo(
+      start.x + (end.x - previous.x) / 6,
+      start.y + (end.y - previous.y) / 6,
+      end.x - (next.x - start.x) / 6,
+      end.y - (next.y - start.y) / 6,
+      end.x,
+      end.y,
+    )
+  }
 }
 
 function wrapTextLines(
@@ -527,54 +550,26 @@ function drawLiveStroke(
     return
   }
 
+  context.save()
   context.beginPath()
 
   if (points.length === 1) {
-    context.arc(
-      points[0].x,
-      points[0].y,
-      width / 2,
-      0,
-      Math.PI * 2,
-    )
-
+    context.arc(points[0].x, points[0].y, width / 2, 0, Math.PI * 2)
     context.fillStyle = color
     context.globalAlpha = opacity
     context.fill()
-    context.globalAlpha = 1
-
+    context.restore()
     return
   }
 
-  context.moveTo(points[0].x, points[0].y)
-
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const current = points[index]
-    const next = points[index + 1]
-
-    const midpointX = (current.x + next.x) / 2
-    const midpointY = (current.y + next.y) / 2
-
-    context.quadraticCurveTo(
-      current.x,
-      current.y,
-      midpointX,
-      midpointY,
-    )
-  }
-
-  const lastPoint = points[points.length - 1]
-
-  context.lineTo(lastPoint.x, lastPoint.y)
-
+  traceSmoothStroke(context, points)
   context.strokeStyle = color
   context.lineWidth = width
   context.globalAlpha = opacity
   context.lineCap = 'round'
   context.lineJoin = 'round'
   context.stroke()
-
-  context.globalAlpha = 1
+  context.restore()
 }
 
 function getDistance(
@@ -587,13 +582,55 @@ function getDistance(
   return Math.sqrt(dx * dx + dy * dy)
 }
 
+function distanceToSegment(
+  point: Point,
+  segmentStart: Point,
+  segmentEnd: Point,
+): number {
+  const dx = segmentEnd.x - segmentStart.x
+  const dy = segmentEnd.y - segmentStart.y
+  const lengthSquared = dx * dx + dy * dy
+  if (lengthSquared === 0) return getDistance(point, segmentStart)
+
+  const projection = Math.max(0, Math.min(1,
+    ((point.x - segmentStart.x) * dx + (point.y - segmentStart.y) * dy) /
+      lengthSquared,
+  ))
+  return Math.hypot(
+    point.x - (segmentStart.x + projection * dx),
+    point.y - (segmentStart.y + projection * dy),
+  )
+}
+
+function isPointNearPath(
+  point: Point,
+  path: Point[],
+  radius: number,
+): boolean {
+  if (path.length === 0) return false
+  if (path.length === 1) return getDistance(point, path[0]) <= radius
+
+  for (let index = 1; index < path.length; index += 1) {
+    if (distanceToSegment(point, path[index - 1], path[index]) <= radius) {
+      return true
+    }
+  }
+
+  return false
+}
+
 function isPointNearStroke(
   point: Point,
   stroke: StrokeElement,
   radius: number,
 ): boolean {
-  for (const strokePoint of stroke.points) {
-    if (getDistance(point, strokePoint) <= radius) {
+  const hitRadius = radius + stroke.width / 2
+  if (stroke.points.length === 1) {
+    return getDistance(point, stroke.points[0]) <= hitRadius
+  }
+
+  for (let index = 1; index < stroke.points.length; index += 1) {
+    if (distanceToSegment(point, stroke.points[index - 1], stroke.points[index]) <= hitRadius) {
       return true
     }
   }
@@ -603,16 +640,52 @@ function isPointNearStroke(
 
 function eraseFromStroke(
   stroke: StrokeElement,
-  point: Point,
+  eraserPath: Point[],
   radius: number,
 ): StrokeElement[] {
+  if (stroke.points.length === 0 || eraserPath.length === 0) return [stroke]
+
+  const spacing = Math.max(1.5, Math.min(4, radius / 4))
+  const sampledPoints: Point[] = [stroke.points[0]]
+  for (let index = 1; index < stroke.points.length; index += 1) {
+    const start = stroke.points[index - 1]
+    const end = stroke.points[index]
+    const distance = getDistance(start, end)
+    const steps = Math.max(1, Math.ceil(distance / spacing))
+
+    for (let step = 1; step <= steps; step += 1) {
+      const ratio = step / steps
+      sampledPoints.push({
+        x: start.x + (end.x - start.x) * ratio,
+        y: start.y + (end.y - start.y) * ratio,
+        pressure: start.pressure === undefined || end.pressure === undefined
+          ? undefined
+          : start.pressure + (end.pressure - start.pressure) * ratio,
+        timestamp: start.timestamp === undefined || end.timestamp === undefined
+          ? undefined
+          : start.timestamp + (end.timestamp - start.timestamp) * ratio,
+      })
+    }
+  }
+
   const remainingSegments: Point[][] = []
   let currentSegment: Point[] = []
+  let erasedAnyPoint = false
 
-  for (const strokePoint of stroke.points) {
-    if (getDistance(point, strokePoint) > radius) {
-      currentSegment.push(strokePoint)
+  for (const strokePoint of sampledPoints) {
+    const isErased = isPointNearPath(
+      strokePoint,
+      eraserPath,
+      radius + stroke.width / 2,
+    )
+
+    if (!isErased) {
+      const lastPoint = currentSegment.at(-1)
+      if (!lastPoint || getDistance(lastPoint, strokePoint) > 0.1) {
+        currentSegment.push(strokePoint)
+      }
     } else {
+      erasedAnyPoint = true
       if (currentSegment.length > 1) {
         remainingSegments.push(currentSegment)
       }
@@ -624,6 +697,8 @@ function eraseFromStroke(
   if (currentSegment.length > 1) {
     remainingSegments.push(currentSegment)
   }
+
+  if (!erasedAnyPoint) return [stroke]
 
   return remainingSegments.map((segment) => ({
     ...stroke,
@@ -859,6 +934,12 @@ function NoteCanvas({
   const selectionActionRef = useRef<{ kind: 'move' | 'marquee' | 'lasso'; start: Point; current: Point; points?: Point[] } | null>(null)
   const imageCropDragRef = useRef<{ pointerId: number; edges: ImageCropEdge[]; crop: NonNullable<ImageElement['crop']> } | null>(null)
   const laserFadeTimerRef = useRef<number | null>(null)
+  const eraserFrameRef = useRef<number | null>(null)
+  const eraserPendingPointsRef = useRef<Point[]>([])
+  const eraserLastPointRef = useRef<Point | null>(null)
+  const eraserPointerIdRef = useRef<number | null>(null)
+  const eraserOriginalNotebookRef = useRef<Notebook | null>(null)
+  const eraserChangedRef = useRef(false)
   const rulerDragRef = useRef<{ pointerId: number; startPointer: Point; startRuler: { x: number; y: number } } | null>(null)
   const selectionResizeRef = useRef<SelectionResizeState | null>(null)
   const selectionRotateRef = useRef<SelectionRotateState | null>(null)
@@ -985,10 +1066,6 @@ function NoteCanvas({
 
   const addStroke = useDocumentStore(
     (state) => state.addStroke,
-  )
-
-  const removeStroke = useDocumentStore(
-    (state) => state.removeStroke,
   )
 
   const addText = useDocumentStore(
@@ -1317,6 +1394,81 @@ function NoteCanvas({
     return {
       x: ((clientX - rect.left) / rect.width) * width,
       y: ((clientY - rect.top) / rect.height) * height,
+    }
+  }
+
+  const applyEraserSweep = () => {
+    const pendingPoints = eraserPendingPointsRef.current.splice(0)
+    if (pendingPoints.length === 0) return
+
+    const previousPoint = eraserLastPointRef.current
+    const eraserPath = previousPoint
+      ? [previousPoint, ...pendingPoints]
+      : pendingPoints
+    eraserLastPointRef.current = pendingPoints[pendingPoints.length - 1]
+
+    const currentNotebook = useDocumentStore.getState().notebook
+    const currentPage = currentNotebook?.pages.find((item) => item.id === pageId)
+    if (!currentNotebook || !currentPage) return
+
+    let changed = false
+    const elements: NoteElement[] = []
+    for (const element of currentPage.elements) {
+      if (element.type !== 'stroke') {
+        elements.push(element)
+        continue
+      }
+      const remainingStrokes = eraseFromStroke(element, eraserPath, eraserSize)
+      if (remainingStrokes.length === 1 && remainingStrokes[0] === element) {
+        elements.push(element)
+        continue
+      }
+
+      changed = true
+      elements.push(...remainingStrokes)
+    }
+
+    if (!changed) return
+
+    eraserChangedRef.current = true
+    useDocumentStore.setState((state) => {
+      if (!state.notebook || state.notebook.id !== currentNotebook.id) return state
+      return {
+        notebook: {
+          ...state.notebook,
+          pages: state.notebook.pages.map((item) =>
+            item.id === pageId ? { ...item, elements } : item,
+          ),
+          updatedAt: Date.now(),
+        },
+      }
+    })
+  }
+
+  const finishEraserGesture = (pointerId: number) => {
+    if (eraserFrameRef.current !== null) {
+      cancelAnimationFrame(eraserFrameRef.current)
+      eraserFrameRef.current = null
+    }
+    applyEraserSweep()
+
+    const originalNotebook = eraserOriginalNotebookRef.current
+    if (originalNotebook && eraserChangedRef.current) {
+      useDocumentStore.setState((state) => ({
+        history: [...state.history, originalNotebook],
+        future: [],
+      }))
+    }
+
+    eraserPendingPointsRef.current = []
+    eraserLastPointRef.current = null
+    eraserPointerIdRef.current = null
+    eraserOriginalNotebookRef.current = null
+    eraserChangedRef.current = false
+
+    const canvas = canvasRef.current
+    if (canvas?.hasPointerCapture(pointerId)) {
+      canvas.releasePointerCapture(pointerId)
     }
   }
 
@@ -2691,47 +2843,21 @@ function NoteCanvas({
     }
 
     if (activeTool === 'eraser') {
+      event.preventDefault()
       setSelectedShapeId(null)
-
-      if (!page) {
+      const currentNotebook = useDocumentStore.getState().notebook
+      if (!currentNotebook) {
         return
       }
-
-      const strokes = page.elements.filter(
-        (element): element is StrokeElement =>
-          element.type === 'stroke',
-      )
-
-      const hitStroke = [...strokes]
-        .reverse()
-        .find((stroke) =>
-          isPointNearStroke(
-            point,
-            stroke,
-            eraserSize,
-          ),
-        )
-
-      if (hitStroke) {
-        const replacementStrokes =
-          eraseFromStroke(
-            hitStroke,
-            point,
-            eraserSize,
-          )
-
-        removeStroke(pageId, hitStroke.id)
-
-        for (const replacementStroke of replacementStrokes) {
-          addStroke(
-            pageId,
-            replacementStroke,
-          )
-        }
-      }
-
+      eraserPointerIdRef.current = event.pointerId
+      // Notebook updates are immutable, so keeping this reference gives us a
+      // single-step undo snapshot without cloning large imported PDFs here.
+      eraserOriginalNotebookRef.current = currentNotebook
+      eraserChangedRef.current = false
+      eraserLastPointRef.current = null
+      eraserPendingPointsRef.current = [point]
+      applyEraserSweep()
       canvas.setPointerCapture(event.pointerId)
-
       return
     }
 
@@ -2883,40 +3009,22 @@ function NoteCanvas({
     if (
       activeTool === 'eraser'
     ) {
-      const point = getPoint(event)
-      const currentPage = page
-
-      if (!currentPage) {
-        return
+      const coalescedEvents = event.nativeEvent.getCoalescedEvents?.() ?? []
+      if (coalescedEvents.length > 0) {
+        eraserPendingPointsRef.current.push(...coalescedEvents.map((sample) => ({
+          ...getPointFromClient(sample.clientX, sample.clientY),
+          pressure: sample.pressure,
+          timestamp: Date.now(),
+        })))
+      } else {
+        eraserPendingPointsRef.current.push(getPoint(event))
       }
 
-      const strokes = currentPage.elements.filter(
-        (element): element is StrokeElement =>
-          element.type === 'stroke',
-      )
-
-      const hitStroke = [...strokes]
-        .reverse()
-        .find((stroke) =>
-          isPointNearStroke(
-            point,
-            stroke,
-            eraserSize,
-          ),
-        )
-
-      if (hitStroke) {
-        const replacementStrokes = eraseFromStroke(
-          hitStroke,
-          point,
-          eraserSize,
-        )
-
-        removeStroke(pageId, hitStroke.id)
-
-        for (const replacementStroke of replacementStrokes) {
-          addStroke(pageId, replacementStroke)
-        }
+      if (eraserFrameRef.current === null) {
+        eraserFrameRef.current = requestAnimationFrame(() => {
+          eraserFrameRef.current = null
+          applyEraserSweep()
+        })
       }
 
       return
@@ -4222,6 +4330,14 @@ function NoteCanvas({
   const stopDrawing = (
     event: PointerEvent<HTMLCanvasElement>,
   ) => {
+    if (eraserPointerIdRef.current === event.pointerId) {
+      eraserPendingPointsRef.current.push(
+        getPointFromClient(event.clientX, event.clientY),
+      )
+      finishEraserGesture(event.pointerId)
+      return
+    }
+
     clearLiveInkPreview()
 
     if (activeTool === 'laser') {
@@ -6031,209 +6147,61 @@ function NoteCanvas({
         <>
           <div
             className="text-format-toolbar"
+            role="toolbar"
+            aria-label="Text formatting"
+            onPointerDown={(event) => event.stopPropagation()}
             style={{
-              position: 'absolute',
-              zIndex: 101,
-              left: `${
-                (textPosition.x / width) * 100
-              }%`,
-              top: `${Math.max(
-                0,
-                ((textPosition.y - 48) / height) *
-                  100,
-              )}%`,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              height: '38px',
-              padding: '4px',
-              border: '1px solid #dedee2',
-              borderRadius: '8px',
-              background: '#ffffff',
-              boxShadow:
-                '0 4px 14px rgba(0, 0, 0, 0.12)',
+              left: `${Math.max(8, Math.min(width - 8, textPosition.x)) / width * 100}%`,
+              top: `${Math.max(8, textPosition.y > 64 ? textPosition.y - 8 : textPosition.y + 54) / height * 100}%`,
+              transform: `translate(${textPosition.x > width / 2 ? '-100%' : '0'}, ${textPosition.y > 64 ? '-100%' : '0'})`,
             }}
           >
-            <select
-              value={textFontSize}
-              onChange={(event) =>
-                setTextFontSize(
-                  Number(event.target.value),
-                )
-              }
-              aria-label="Text font size"
-              style={{
-                height: '30px',
-                padding: '4px 7px',
-                border: '1px solid #dedee2',
-                borderRadius: '5px',
-                background: '#ffffff',
-              }}
-            >
-              {TEXT_FONT_SIZES.map((fontSize) => (
-                <option
-                  key={fontSize}
-                  value={fontSize}
-                >
-                  {fontSize}
-                </option>
-              ))}
-            </select>
+            <div className="text-format-group">
+              <select
+                className="text-format-size"
+                value={textFontSize}
+                onChange={(event) => setTextFontSize(Number(event.target.value))}
+                aria-label="Text font size"
+                title="Font size"
+              >
+                {TEXT_FONT_SIZES.map((fontSize) => (
+                  <option key={fontSize} value={fontSize}>{fontSize} pt</option>
+                ))}
+              </select>
+            </div>
 
-            <button
-              type="button"
-              onClick={() =>
-                setTextBold((value) => !value)
-              }
-              style={{
-                width: '30px',
-                height: '30px',
-                border:
-                  textBold
-                    ? '1px solid #55555c'
-                    : '1px solid #dedee2',
-                borderRadius: '5px',
-                background:
-                  textBold
-                    ? '#f1f1f3'
-                    : '#ffffff',
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-              aria-label="Bold"
-              title="Bold"
-            >
-              B
-            </button>
+            <span className="text-format-divider" aria-hidden="true" />
 
-            <button
-              type="button"
-              onClick={() =>
-                setTextItalic((value) => !value)
-              }
-              style={{
-                width: '30px',
-                height: '30px',
-                border:
-                  textItalic
-                    ? '1px solid #55555c'
-                    : '1px solid #dedee2',
-                borderRadius: '5px',
-                background:
-                  textItalic
-                    ? '#f1f1f3'
-                    : '#ffffff',
-                fontStyle: 'italic',
-                cursor: 'pointer',
-              }}
-              aria-label="Italic"
-              title="Italic"
-            >
-              I
-            </button>
+            <div className="text-format-group" aria-label="Text style">
+              <button type="button" className={`text-format-button${textBold ? ' is-active' : ''}`} onClick={() => setTextBold((value) => !value)} aria-label="Bold" aria-pressed={textBold} title="Bold">
+                <Bold size={16} />
+              </button>
+              <button type="button" className={`text-format-button${textItalic ? ' is-active' : ''}`} onClick={() => setTextItalic((value) => !value)} aria-label="Italic" aria-pressed={textItalic} title="Italic">
+                <Italic size={16} />
+              </button>
+              <button type="button" className={`text-format-button${textUnderline ? ' is-active' : ''}`} onClick={() => setTextUnderline((value) => !value)} aria-label="Underline" aria-pressed={textUnderline} title="Underline">
+                <Underline size={16} />
+              </button>
+            </div>
 
-            <button
-              type="button"
-              onClick={() =>
-                setTextUnderline((value) => !value)
-              }
-              style={{
-                width: '30px',
-                height: '30px',
-                border:
-                  textUnderline
-                    ? '1px solid #55555c'
-                    : '1px solid #dedee2',
-                borderRadius: '5px',
-                background:
-                  textUnderline
-                    ? '#f1f1f3'
-                    : '#ffffff',
-                textDecoration: 'underline',
-                cursor: 'pointer',
-              }}
-              aria-label="Underline"
-              title="Underline"
-            >
-              U
-            </button>
+            <span className="text-format-divider" aria-hidden="true" />
 
-            <button
-              type="button"
-              onClick={() =>
-                setTextAlignment('left')
-              }
-              style={{
-                width: '30px',
-                height: '30px',
-                border:
-                  textAlignment === 'left'
-                    ? '1px solid #55555c'
-                    : '1px solid #dedee2',
-                borderRadius: '5px',
-                background:
-                  textAlignment === 'left'
-                    ? '#f1f1f3'
-                    : '#ffffff',
-                cursor: 'pointer',
-              }}
-              aria-label="Align left"
-              title="Align left"
-            >
-              L
-            </button>
+            <div className="text-format-group" aria-label="Text alignment">
+              <button type="button" className={`text-format-button${textAlignment === 'left' ? ' is-active' : ''}`} onClick={() => setTextAlignment('left')} aria-label="Align left" aria-pressed={textAlignment === 'left'} title="Align left">
+                <AlignLeft size={16} />
+              </button>
+              <button type="button" className={`text-format-button${textAlignment === 'center' ? ' is-active' : ''}`} onClick={() => setTextAlignment('center')} aria-label="Align center" aria-pressed={textAlignment === 'center'} title="Align center">
+                <AlignCenter size={16} />
+              </button>
+              <button type="button" className={`text-format-button${textAlignment === 'right' ? ' is-active' : ''}`} onClick={() => setTextAlignment('right')} aria-label="Align right" aria-pressed={textAlignment === 'right'} title="Align right">
+                <AlignRight size={16} />
+              </button>
+            </div>
 
-            <button
-              type="button"
-              onClick={() =>
-                setTextAlignment('center')
-              }
-              style={{
-                width: '30px',
-                height: '30px',
-                border:
-                  textAlignment === 'center'
-                    ? '1px solid #55555c'
-                    : '1px solid #dedee2',
-                borderRadius: '5px',
-                background:
-                  textAlignment === 'center'
-                    ? '#f1f1f3'
-                    : '#ffffff',
-                cursor: 'pointer',
-              }}
-              aria-label="Align center"
-              title="Align center"
-            >
-              C
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                setTextAlignment('right')
-              }
-              style={{
-                width: '30px',
-                height: '30px',
-                border:
-                  textAlignment === 'right'
-                    ? '1px solid #55555c'
-                    : '1px solid #dedee2',
-                borderRadius: '5px',
-                background:
-                  textAlignment === 'right'
-                    ? '#f1f1f3'
-                    : '#ffffff',
-                cursor: 'pointer',
-              }}
-              aria-label="Align right"
-              title="Align right"
-            >
-              R
-            </button>
+            <span className="text-format-divider" aria-hidden="true" />
 
             <input
+              className="text-format-color"
               type="color"
               value={color}
               onChange={(event) =>
@@ -6243,46 +6211,19 @@ function NoteCanvas({
               }
               aria-label="Text color"
               title="Text color"
-              style={{
-                width: '30px',
-                height: '30px',
-                padding: '2px',
-                border: '1px solid #dedee2',
-                borderRadius: '5px',
-                cursor: 'pointer',
-              }}
             />
 
-            <button
-              type="button"
-              onClick={saveText}
-              style={{
-                height: '30px',
-                padding: '0 9px',
-                border: '1px solid #55555c',
-                borderRadius: '5px',
-                background: '#55555c',
-                color: '#ffffff',
-                cursor: 'pointer',
-              }}
-            >
-              Done
-            </button>
+            <span className="text-format-divider" aria-hidden="true" />
 
-            <button
-              type="button"
-              onClick={cancelTextEditing}
-              style={{
-                height: '30px',
-                padding: '0 9px',
-                border: '1px solid #dedee2',
-                borderRadius: '5px',
-                background: '#ffffff',
-                cursor: 'pointer',
-              }}
-            >
-              Cancel
-            </button>
+            <div className="text-format-actions">
+              <button type="button" className="text-format-cancel" onClick={cancelTextEditing} aria-label="Cancel text" title="Cancel">
+                <X size={16} />
+              </button>
+              <button type="button" className="text-format-done" onClick={saveText} title="Finish editing">
+                <Check size={15} />
+                <span>Done</span>
+              </button>
+            </div>
           </div>
 
           <textarea
