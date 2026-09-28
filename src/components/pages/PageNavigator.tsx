@@ -19,6 +19,8 @@ import PageThumbnail from './PageThumbnail'
 
 type PdfPageLike = {
   pdfBackground?: string
+  pdfAssetId?: string
+  pdfPageNumber?: number
   pdfSourceName?: string
 }
 
@@ -506,9 +508,7 @@ function PageNavigator() {
       const pdfPage =
         page as Page & PdfPageLike
 
-      return Boolean(
-        pdfPage.pdfBackground,
-      )
+      return Boolean(pdfPage.pdfBackground || pdfPage.pdfAssetId)
     }).length
 
   return (
@@ -696,14 +696,14 @@ function PageNavigator() {
         </div>
       )}
 
-      <div className={`page-list-scroll ${notebook.pages.some((page) => Boolean((page as typeof page & PdfPageLike).pdfBackground)) ? 'page-list-scroll-with-pdf' : ''}`}>
+      <div className={`page-list-scroll ${notebook.pages.some((page) => { const pdfPage = page as typeof page & PdfPageLike; return Boolean(pdfPage.pdfBackground || pdfPage.pdfAssetId) }) ? 'page-list-scroll-with-pdf' : ''}`}>
         <div className="page-list">
           {notebook.pages
             .map((page, index) => ({ page, index }))
             .filter(({ page }) => {
               const pdfPage =
                 page as typeof page & PdfPageLike
-              return !pdfPage.pdfBackground
+              return !pdfPage.pdfBackground && !pdfPage.pdfAssetId
             })
             .map(({ page, index }) => {
               const canMoveUp = index > 0
@@ -862,7 +862,7 @@ function PageNavigator() {
 
       {notebook.pages.some((page) => {
         const pdfPage = page as typeof page & PdfPageLike
-        return Boolean(pdfPage.pdfBackground)
+        return Boolean(pdfPage.pdfBackground || pdfPage.pdfAssetId)
       }) && (
         <div className="pdf-pages-section">
           <div className="pdf-pages-title">
@@ -876,7 +876,7 @@ function PageNavigator() {
             .filter(({ page }) => {
               const pdfPage =
                 page as typeof page & PdfPageLike
-              return Boolean(pdfPage.pdfBackground)
+              return Boolean(pdfPage.pdfBackground || pdfPage.pdfAssetId)
             })
             .map(({ page, index }) => {
               const pdfPage =

@@ -26,6 +26,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useDocumentStore } from '../../stores/documentStore'
 import { usePageStore } from '../../stores/pageStore'
 import { useToolStore } from '../../stores/toolStore'
+import { extractPdfPageText, getPdfAsset, savePdfAsset } from '../../utils/pdfStorage'
 import AudioRecorder from './AudioRecorder'
 
 function TopToolbar() {
@@ -66,6 +67,7 @@ function TopToolbar() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const indexedPdfSearchesRef = useRef(new Set<string>())
   const importInputRef = useRef<HTMLInputElement>(null)
   const searchContainerRef = useRef<HTMLDivElement>(null)
 
@@ -122,15 +124,32 @@ function TopToolbar() {
     setIsFullscreen(true)
   }
 
-  const exportNotebook = () => {
+  const exportNotebook = async () => {
     if (!notebook) return
-    const blob = new Blob([JSON.stringify({ format: 'freenotes-notebook', version: 1, notebook }, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${notebook.title.replace(/[\\/:*?"<>|]/g, '-').trim() || 'notebook'}.freenotes.json`
-    link.click()
-    URL.revokeObjectURL(url)
+    try {
+      const pdfAssetIds = [...new Set(notebook.pages.flatMap((page) => page.pdfAssetId ? [page.pdfAssetId] : []))]
+      const pdfAssets: Record<string, string> = {}
+      await Promise.all(pdfAssetIds.map(async (id) => {
+        const blob = await getPdfAsset(id)
+        pdfAssets[id] = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => typeof reader.result === 'string'
+            ? resolve(reader.result)
+            : reject(new Error('Unable to package an imported PDF.'))
+          reader.onerror = () => reject(new Error('Unable to package an imported PDF.'))
+          reader.readAsDataURL(blob)
+        })
+      }))
+      const blob = new Blob([JSON.stringify({ format: 'freenotes-notebook', version: 2, notebook, pdfAssets }, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${notebook.title.replace(/[\\/:*?"<>|]/g, '-').trim() || 'notebook'}.freenotes.json`
+      link.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Unable to export this notebook.')
+    }
   }
 
   const normalizedSearchQuery = searchQuery.trim().toLocaleLowerCase()
@@ -154,19 +173,83 @@ function TopToolbar() {
       })
     : []
 
+  useEffect(() => {
+    if (!normalizedSearchQuery || !notebook) return
+    const pagesToIndex = notebook.pages.filter((page) =>
+      page.pdfAssetId && page.pdfPageNumber && typeof page.pdfText !== 'string',
+    )
+    if (pagesToIndex.length === 0) return
+    const assetKey = [...new Set(pagesToIndex.map((page) => page.pdfAssetId))].join(',')
+    const indexKey = `${notebook.id}:${assetKey}`
+    if (indexedPdfSearchesRef.current.has(indexKey)) return
+    indexedPdfSearchesRef.current.add(indexKey)
+
+    void (async () => {
+      const textByPageId = new Map<string, string>()
+      for (let offset = 0; offset < pagesToIndex.length; offset += 4) {
+        const batch = pagesToIndex.slice(offset, offset + 4)
+        const results = await Promise.allSettled(batch.map(async (page) => ({
+          pageId: page.id,
+          text: await extractPdfPageText(page.pdfAssetId!, page.pdfPageNumber!),
+        })))
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            textByPageId.set(result.value.pageId, result.value.text)
+          }
+        }
+      }
+
+      useDocumentStore.setState((state) => {
+        if (!state.notebook || state.notebook.id !== notebook.id) return state
+        let changed = false
+        const pages = state.notebook.pages.map((page) => {
+          const text = textByPageId.get(page.id)
+          if (text === undefined || page.pdfText === text) return page
+          changed = true
+          return { ...page, pdfText: text }
+        })
+        return changed
+          ? { notebook: { ...state.notebook, pages } }
+          : state
+      })
+    })().catch(() => {
+      indexedPdfSearchesRef.current.delete(indexKey)
+    })
+  }, [normalizedSearchQuery, notebook])
+
   const importNotebook = async (file: File) => {
     try {
       const parsed: unknown = JSON.parse(await file.text())
-      const candidate = parsed && typeof parsed === 'object' && 'notebook' in parsed ? parsed.notebook : parsed
+      const envelope = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null
+      const candidate = envelope && 'notebook' in envelope ? envelope.notebook : parsed
       if (!candidate || typeof candidate !== 'object' || !('title' in candidate) || typeof candidate.title !== 'string' || !('pages' in candidate) || !Array.isArray(candidate.pages) || candidate.pages.length === 0) {
         throw new Error('This file is not a valid Medico Notes notebook.')
       }
       const imported = structuredClone(candidate) as typeof notebook
       if (!imported) return
+      const embeddedAssets = envelope?.pdfAssets && typeof envelope.pdfAssets === 'object'
+        ? envelope.pdfAssets as Record<string, unknown>
+        : {}
+      const remappedAssetIds = new Map<string, string>()
+      for (const page of imported.pages) {
+        const oldAssetId = page.pdfAssetId
+        if (!oldAssetId || remappedAssetIds.has(oldAssetId)) continue
+        const encodedAsset = embeddedAssets[oldAssetId]
+        if (typeof encodedAsset !== 'string') continue
+        const pdfBlob = await fetch(encodedAsset).then((response) => response.blob())
+        const newAssetId = crypto.randomUUID()
+        await savePdfAsset(newAssetId, pdfBlob)
+        remappedAssetIds.set(oldAssetId, newAssetId)
+      }
       imported.id = crypto.randomUUID()
       imported.createdAt = Date.now()
       imported.updatedAt = Date.now()
-      imported.pages = imported.pages.map((page) => ({ ...page, id: crypto.randomUUID(), elements: page.elements.map((element) => ({ ...element, id: crypto.randomUUID() })) }))
+      imported.pages = imported.pages.map((page) => ({
+        ...page,
+        id: crypto.randomUUID(),
+        pdfAssetId: page.pdfAssetId ? remappedAssetIds.get(page.pdfAssetId) ?? page.pdfAssetId : undefined,
+        elements: page.elements.map((element) => ({ ...element, id: crypto.randomUUID() })),
+      }))
       useDocumentStore.setState((state) => {
         const notebooks = [...state.notebooks, imported]
         const activeNotebookId = imported.id

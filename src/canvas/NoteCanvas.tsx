@@ -12,6 +12,7 @@ import {
   AlignRight,
   Bold,
   Check,
+  Copy,
   FileDown,
   FileUp,
   ImagePlus,
@@ -24,6 +25,7 @@ import {
 import { useDocumentStore } from '../stores/documentStore'
 import { usePageStore } from '../stores/pageStore'
 import { useToolStore } from '../stores/toolStore'
+import { deletePdfAsset, registerPdfDocument, renderPdfPageImage, savePdfAsset } from '../utils/pdfStorage'
 import type {
   Point,
   ImageElement,
@@ -178,27 +180,10 @@ function drawStroke(
   context.globalAlpha = stroke.opacity
   context.lineCap = 'round'
   context.lineJoin = 'round'
-  if (points.some((point) => point.pressure !== undefined)) {
-    drawPressureSegments(context, points, stroke.width)
-  } else {
-    traceSmoothStroke(context, points)
-    context.lineWidth = stroke.width
-    context.stroke()
-  }
+  context.lineWidth = stroke.width
+  traceSmoothStroke(context, points)
+  context.stroke()
   context.restore()
-}
-
-function drawPressureSegments(context: CanvasRenderingContext2D, points: Point[], baseWidth: number) {
-  for (let index = 1; index < points.length; index += 1) {
-    const previous = points[index - 1]
-    const point = points[index]
-    const pressure = Math.max(0.08, Math.min(1, ((previous.pressure ?? 0.5) + (point.pressure ?? 0.5)) / 2))
-    context.beginPath()
-    context.moveTo(previous.x, previous.y)
-    context.lineTo(point.x, point.y)
-    context.lineWidth = baseWidth * (0.35 + pressure * 1.3)
-    context.stroke()
-  }
 }
 
 function traceSmoothStroke(
@@ -564,40 +549,6 @@ function drawStickyNote(context: CanvasRenderingContext2D, sticky: StickyNoteEle
   context.restore()
 }
 
-function drawLiveStrokeSlice(
-  context: CanvasRenderingContext2D,
-  points: Point[],
-  startIndex: number,
-  color: string,
-  width: number,
-  opacity: number,
-) {
-  if (points.length === 0) return
-  context.save()
-  context.strokeStyle = color
-  context.globalAlpha = opacity
-  context.lineCap = 'round'
-  context.lineJoin = 'round'
-  if (startIndex === 0) {
-    const first = points[0]
-    context.beginPath()
-    context.arc(first.x, first.y, width * (0.35 + (first.pressure ?? 0.5) * 1.3) / 2, 0, Math.PI * 2)
-    context.fillStyle = color
-    context.fill()
-  }
-  for (let index = Math.max(1, startIndex); index < points.length; index += 1) {
-    const previous = points[index - 1]
-    const point = points[index]
-    const pressure = Math.max(0.08, Math.min(1, ((previous.pressure ?? 0.5) + (point.pressure ?? 0.5)) / 2))
-    context.beginPath()
-    context.moveTo(previous.x, previous.y)
-    context.lineTo(point.x, point.y)
-    context.lineWidth = width * (0.35 + pressure * 1.3)
-    context.stroke()
-  }
-  context.restore()
-}
-
 function getDistance(
   pointA: Point,
   pointB: Point,
@@ -792,6 +743,25 @@ function simplifyStroke(points: Point[], tolerance: number): Point[] {
   return [...simplifyStroke(points.slice(0, farthestIndex + 1), tolerance).slice(0, -1), ...simplifyStroke(points.slice(farthestIndex), tolerance)]
 }
 
+function simplifyClosedContour(points: Point[], tolerance: number): Point[] {
+  const contour = points.length > 1 && Math.hypot(points[0].x - points.at(-1)!.x, points[0].y - points.at(-1)!.y) < tolerance
+    ? points.slice(0, -1)
+    : [...points]
+  if (contour.length < 4) return contour
+
+  // RDP cannot simplify a loop whose first and last points are identical:
+  // its baseline has zero length and turns the loop into a radial test.
+  // Split the loop at its point furthest from the start and simplify both arcs.
+  let oppositeIndex = 1
+  for (let index = 2; index < contour.length; index += 1) {
+    if (Math.hypot(contour[index].x - contour[0].x, contour[index].y - contour[0].y) >
+      Math.hypot(contour[oppositeIndex].x - contour[0].x, contour[oppositeIndex].y - contour[0].y)) oppositeIndex = index
+  }
+  const firstArc = simplifyStroke(contour.slice(0, oppositeIndex + 1), tolerance)
+  const secondArc = simplifyStroke([...contour.slice(oppositeIndex), contour[0]], tolerance)
+  return [...firstArc.slice(0, -1), ...secondArc.slice(0, -1)]
+}
+
 function removeStraightContourPoints(points: Point[]): Point[] {
   const contour = [...points]
   let changed = true
@@ -867,11 +837,8 @@ function recognizeStroke(points: Point[]): RecognizedStroke | null {
 
     // Simplify the closed contour first. Checking for four corners before
     // roundness keeps a square from being mistaken for a rough circle.
-    const contour = [...points]
-    if (endDistance < Math.max(24, diagonal * 0.3)) contour.pop()
-    contour.push(contour[0])
-    const simplifiedContour = simplifyStroke(contour, Math.max(4, diagonal * 0.075))
-    const corners = removeStraightContourPoints(simplifiedContour.slice(0, -1))
+    const simplifiedContour = simplifyClosedContour(points, Math.max(4, diagonal * 0.075))
+    const corners = removeStraightContourPoints(simplifiedContour)
     if (corners.length === 4) {
       const sides = corners.map((point, index) => {
         const next = corners[(index + 1) % corners.length]
@@ -893,7 +860,7 @@ function recognizeStroke(points: Point[]): RecognizedStroke | null {
     const radii = points.map((point) => Math.hypot(point.x - centerX, point.y - centerY))
     const meanRadius = radii.reduce((sum, radius) => sum + radius, 0) / radii.length
     const deviation = Math.sqrt(radii.reduce((sum, radius) => sum + (radius - meanRadius) ** 2, 0) / radii.length)
-    if (meanRadius > 0 && deviation / meanRadius < 0.2 && boxWidth / boxHeight > 0.72 && boxWidth / boxHeight < 1.38) {
+    if (meanRadius > 0 && deviation / meanRadius < 0.28 && boxWidth / boxHeight > 0.68 && boxWidth / boxHeight < 1.45) {
       const diameter = (boxWidth + boxHeight) / 2
       return { kind: 'circle', x: centerX - diameter / 2, y: centerY - diameter / 2, width: diameter, height: diameter }
     }
@@ -971,6 +938,7 @@ function NoteCanvas({
   const eraserPointerIdRef = useRef<number | null>(null)
   const eraserOriginalNotebookRef = useRef<Notebook | null>(null)
   const eraserChangedRef = useRef(false)
+  const eraserPreviewElementsRef = useRef<NoteElement[] | null>(null)
   const rulerDragRef = useRef<{ pointerId: number; startPointer: Point; startRuler: { x: number; y: number } } | null>(null)
   const selectionResizeRef = useRef<SelectionResizeState | null>(null)
   const selectionRotateRef = useRef<SelectionRotateState | null>(null)
@@ -1165,7 +1133,7 @@ function NoteCanvas({
   const importPdf = async (file: File) => {
     setPdfImportError(null)
 
-    if (file.type !== 'application/pdf') {
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
       setPdfImportError('Please choose a PDF file.')
       return
     }
@@ -1179,128 +1147,68 @@ function NoteCanvas({
 
     setIsImportingPdf(true)
 
+    const pdfAssetId = crypto.randomUUID()
+    let pdfLoadingTask: import('pdfjs-dist').PDFDocumentLoadingTask | null = null
+    let pdfSaveTask: Promise<void> | null = null
+    let assetSaved = false
+    let documentRegistered = false
     try {
-      const pdfjsLib = await import('pdfjs-dist')
+      // Start durable storage, PDF.js loading, and byte reading together so a
+      // large file does not pay for these independent steps one after another.
+      pdfSaveTask = savePdfAsset(pdfAssetId, file)
+      const [pdfjsLib, fileData] = await Promise.all([
+        import('pdfjs-dist'),
+        file.arrayBuffer(),
+      ])
+      await pdfSaveTask
+      assetSaved = true
 
       pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
         'pdfjs-dist/build/pdf.worker.min.mjs',
         import.meta.url,
       ).toString()
 
-      const fileData = new Uint8Array(await file.arrayBuffer())
-      const pdfLoadingTask = pdfjsLib.getDocument({
-        data: fileData,
+      pdfLoadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(fileData),
       })
       const pdf = await pdfLoadingTask.promise
+      registerPdfDocument(pdfAssetId, pdf, pdfLoadingTask)
+      documentRegistered = true
 
-      const importedPages: PdfPage[] = []
+      if (pdf.numPages === 0) throw new Error('The PDF contains no pages.')
 
-      const renderPdfPage = async (pageNumber: number): Promise<PdfPage> => {
-        const pdfPage = await pdf.getPage(pageNumber)
-        // A 1.25 scale stays crisp at the page's display size while cutting
-        // raster work and encoded image size compared with 1.5x rendering.
-        // Rasterise close to the visible page size. Higher resolutions add a
-        // lot of CPU and storage cost without improving the editor view.
-        const viewport = pdfPage.getViewport({ scale: pdf.numPages > 24 ? 0.82 : 1.05 })
-        const renderCanvas = document.createElement('canvas')
-        const context = renderCanvas.getContext('2d')
-
-        if (!context) {
-          throw new Error('Unable to create a PDF rendering canvas.')
-        }
-
-        renderCanvas.width = Math.ceil(viewport.width)
-        renderCanvas.height = Math.ceil(viewport.height)
-
-        const textPromise = (async () => {
-          const textReader = pdfPage.streamTextContent().getReader()
-          const pdfTextItems: { str?: string }[] = []
-          try {
-            while (true) {
-              const { value, done } = await textReader.read()
-              if (done) break
-              pdfTextItems.push(...value.items)
-            }
-          } finally {
-            textReader.releaseLock()
-          }
-          return pdfTextItems
-            .map((item) => ('str' in item ? item.str : ''))
-            .filter(Boolean)
-            .join(' ')
-        })()
-
-        const [, pdfText] = await Promise.all([
-          pdfPage.render({ canvas: renderCanvas, canvasContext: context, viewport }).promise,
-          textPromise,
-        ])
-        // JPEG keeps imported page data much smaller than PNG, reducing both
-        // conversion time and the amount of notebook data written to storage.
-        const pdfBackground = renderCanvas.toDataURL('image/jpeg', 0.78)
-        renderCanvas.width = 0
-        renderCanvas.height = 0
-
+      const importedPages: PdfPage[] = Array.from({ length: pdf.numPages }, (_, index) => {
+        const pageNumber = index + 1
         return {
           id: crypto.randomUUID(),
           title: `${file.name.replace(/\.pdf$/i, '')} - Page ${pageNumber}`,
           elements: [],
           background: 'plain',
-          pdfBackground,
+          pdfAssetId,
+          pdfPageNumber: pageNumber,
           pdfSourceName: file.name,
-          pdfText,
         }
-      }
+      })
 
-      // Render a small batch in parallel to reduce total wait time without
-      // allocating a canvas for every page of a large document at once.
-      for (let firstPage = 1; firstPage <= pdf.numPages; firstPage += 2) {
-        const batch = await Promise.all(
-          [firstPage, firstPage + 1]
-            .filter((pageNumber) => pageNumber <= pdf.numPages)
-            .map(renderPdfPage),
-        )
-        importedPages.push(...batch)
-      }
-
-      await pdfLoadingTask.destroy()
-
-      if (importedPages.length === 0) {
-        throw new Error('The PDF contains no pages.')
-      }
-
+      let inserted = false
       useDocumentStore.setState((state) => {
-        if (!state.notebook) {
-          return state
-        }
-
+        if (!state.notebook || state.notebook.id !== currentNotebook.id) return state
         const previousNotebook = structuredClone(state.notebook)
-
-        // A freshly created notebook contains one untouched blank page.
-        // Replace that starter page with the first imported PDF page so the
-        // PDF becomes the actual page instead of appearing after a blank page.
         const starterPage = state.notebook.pages.length === 1
           ? state.notebook.pages[0]
           : null
-
-        const starterPageIsBlank =
-          starterPage !== null &&
+        const starterPageIsBlank = starterPage !== null &&
           starterPage.elements.length === 0 &&
           starterPage.background === 'plain' &&
-          !('pdfBackground' in starterPage)
-
-        const pages = starterPageIsBlank
-          ? [
-              ...importedPages,
-            ]
-          : [
-              ...state.notebook.pages,
-              ...importedPages,
-            ]
-
+          !starterPage.pdfBackground &&
+          !starterPage.pdfAssetId
+        inserted = true
         return {
           notebook: {
             ...state.notebook,
-            pages,
+            pages: starterPageIsBlank
+              ? importedPages
+              : [...state.notebook.pages, ...importedPages],
             updatedAt: Date.now(),
           },
           history: [...state.history, previousNotebook],
@@ -1308,17 +1216,30 @@ function NoteCanvas({
         }
       })
 
-      usePageStore.setState({
-        activePageId: importedPages[0].id,
-      })
+      if (!inserted) {
+        await deletePdfAsset(pdfAssetId)
+        return
+      }
+      usePageStore.setState({ activePageId: importedPages[0].id })
+
     } catch (error) {
       console.error('PDF import failed:', error)
+      if (pdfSaveTask && !assetSaved) {
+        await pdfSaveTask.then(() => { assetSaved = true }).catch(() => undefined)
+      }
+      if (assetSaved) await deletePdfAsset(pdfAssetId).catch(() => undefined)
+      assetSaved = false
       setPdfImportError(
         error instanceof Error
           ? error.message
           : 'Unable to import this PDF.',
       )
     } finally {
+      // The document remains cached for fast page navigation; failed imports
+      // release the loading task and its worker resources.
+      if (pdfLoadingTask && !documentRegistered) {
+        await pdfLoadingTask.destroy().catch(() => undefined)
+      }
       setIsImportingPdf(false)
 
       if (pdfInputRef.current) {
@@ -1445,13 +1366,12 @@ function NoteCanvas({
       : pendingPoints
     eraserLastPointRef.current = pendingPoints[pendingPoints.length - 1]
 
-    const currentNotebook = useDocumentStore.getState().notebook
-    const currentPage = currentNotebook?.pages.find((item) => item.id === pageId)
-    if (!currentNotebook || !currentPage) return
+    const previewElements = eraserPreviewElementsRef.current
+    if (!previewElements) return
 
     let changed = false
     const elements: NoteElement[] = []
-    for (const element of currentPage.elements) {
+    for (const element of previewElements) {
       if (element.type !== 'stroke') {
         elements.push(element)
         continue
@@ -1469,18 +1389,10 @@ function NoteCanvas({
     if (!changed) return
 
     eraserChangedRef.current = true
-    useDocumentStore.setState((state) => {
-      if (!state.notebook || state.notebook.id !== currentNotebook.id) return state
-      return {
-        notebook: {
-          ...state.notebook,
-          pages: state.notebook.pages.map((item) =>
-            item.id === pageId ? { ...item, elements } : item,
-          ),
-          updatedAt: Date.now(),
-        },
-      }
-    })
+    eraserPreviewElementsRef.current = elements
+
+    const context = canvasRef.current?.getContext('2d')
+    if (context) redrawCanvas(context, elements)
   }
 
   const finishEraserGesture = (pointerId: number) => {
@@ -1491,11 +1403,22 @@ function NoteCanvas({
     applyEraserSweep()
 
     const originalNotebook = eraserOriginalNotebookRef.current
-    if (originalNotebook && eraserChangedRef.current) {
-      useDocumentStore.setState((state) => ({
-        history: [...state.history, originalNotebook],
-        future: [],
-      }))
+    const finalElements = eraserPreviewElementsRef.current
+    if (originalNotebook && eraserChangedRef.current && finalElements) {
+      useDocumentStore.setState((state) => {
+        if (!state.notebook || state.notebook.id !== originalNotebook.id) return state
+        return {
+          notebook: {
+            ...state.notebook,
+            pages: state.notebook.pages.map((item) =>
+              item.id === pageId ? { ...item, elements: finalElements } : item,
+            ),
+            updatedAt: Date.now(),
+          },
+          history: [...state.history, originalNotebook],
+          future: [],
+        }
+      })
     }
 
     eraserPendingPointsRef.current = []
@@ -1503,6 +1426,7 @@ function NoteCanvas({
     eraserPointerIdRef.current = null
     eraserOriginalNotebookRef.current = null
     eraserChangedRef.current = false
+    eraserPreviewElementsRef.current = null
 
     const canvas = canvasRef.current
     if (canvas?.hasPointerCapture(pointerId)) {
@@ -1540,6 +1464,7 @@ function NoteCanvas({
 
   const redrawCanvas = (
     context: CanvasRenderingContext2D,
+    elementsOverride?: NoteElement[],
   ) => {
     const canvas = canvasRef.current
 
@@ -1558,7 +1483,7 @@ function NoteCanvas({
       return
     }
 
-    for (const element of page.elements) {
+    for (const element of elementsOverride ?? page.elements) {
       if (stickyDragRef.current?.sticky.id === element.id) {
         continue
       }
@@ -3005,6 +2930,8 @@ function NoteCanvas({
       // single-step undo snapshot without cloning large imported PDFs here.
       eraserOriginalNotebookRef.current = currentNotebook
       eraserChangedRef.current = false
+      eraserPreviewElementsRef.current =
+        currentNotebook.pages.find((item) => item.id === pageId)?.elements ?? null
       eraserLastPointRef.current = null
       eraserPendingPointsRef.current = [point]
       applyEraserSweep()
@@ -3199,13 +3126,23 @@ function NoteCanvas({
     ) {
       const coalescedEvents = event.nativeEvent.getCoalescedEvents?.() ?? []
       if (coalescedEvents.length > 0 && !rulerVisible) {
-        currentPointsRef.current.push(...coalescedEvents.map((sample) => ({
-          ...getPointFromClient(sample.clientX, sample.clientY),
-          pressure: sample.pressure,
-          timestamp: Date.now(),
-        })))
+        for (const sample of coalescedEvents) {
+          const point = {
+            ...getPointFromClient(sample.clientX, sample.clientY),
+            pressure: sample.pressure,
+            timestamp: sample.timeStamp,
+          }
+          const previous = currentPointsRef.current.at(-1)
+          if (!previous || Math.hypot(point.x - previous.x, point.y - previous.y) >= 0.55) {
+            currentPointsRef.current.push(point)
+          }
+        }
       } else {
-        currentPointsRef.current.push(getPoint(event))
+        const point = getPoint(event)
+        const previous = currentPointsRef.current.at(-1)
+        if (!previous || Math.hypot(point.x - previous.x, point.y - previous.y) >= 0.55) {
+          currentPointsRef.current.push(point)
+        }
       }
 
       if (liveInkFrameRef.current === null) {
@@ -3215,7 +3152,6 @@ function NoteCanvas({
           const context = previewCanvas?.getContext('2d')
           if (!previewCanvas || !context) return
 
-          const startIndex = liveRenderedPointCountRef.current
           let strokeWidth = widthValue
           let strokeOpacity = opacity
 
@@ -3227,7 +3163,18 @@ function NoteCanvas({
             strokeOpacity = Math.min(opacity, 0.3)
           }
 
-          drawLiveStrokeSlice(context, currentPointsRef.current, startIndex, color, strokeWidth, strokeOpacity)
+          // Rebuild the preview from one smoothed path. Incremental segments
+          // leave visible caps and seams between animation frames on stylus ink.
+          context.clearRect(0, 0, width, height)
+          drawStroke(context, {
+            id: 'live-stroke-preview',
+            type: 'stroke',
+            points: currentPointsRef.current,
+            color,
+            width: strokeWidth,
+            opacity: strokeOpacity,
+            tool: activeTool as StrokeElement['tool'],
+          })
           liveRenderedPointCountRef.current = currentPointsRef.current.length
         })
       }
@@ -5041,6 +4988,14 @@ function NoteCanvas({
     : null
 
   const selectedElements = (page?.elements ?? []).filter((element) => selectedElementIds.includes(element.id))
+  const selectedActionIds = [...new Set([
+    ...selectedElementIds,
+    ...(selectedTextId && !editingTextId ? [selectedTextId] : []),
+    ...selectedShapeIds,
+    ...(selectedShapeId ? [selectedShapeId] : []),
+  ])]
+  const selectedActionElements = (page?.elements ?? []).filter((element) => selectedActionIds.includes(element.id))
+  const shapeHasDedicatedToolbar = activeTool === 'shape' && Boolean(selectedShapeId) && selectedShapeIds.length <= 1
   const selectedImage = selectedElements.length === 1 && selectedElements[0].type === 'image'
     ? selectedElements[0]
     : null
@@ -5056,17 +5011,56 @@ function NoteCanvas({
     ? { x: selectionActionRef.current.current.x - selectionActionRef.current.start.x, y: selectionActionRef.current.current.y - selectionActionRef.current.start.y }
     : { x: 0, y: 0 }
 
-  const deleteSelectedElements = () => {
-    if (selectedElementIds.length === 0) return
+  const deleteSelectedElements = (elementIds = selectedActionIds) => {
+    if (elementIds.length === 0) return
     useDocumentStore.setState((state) => {
       if (!state.notebook) return state
       const previousNotebook = structuredClone(state.notebook)
       const pages = state.notebook.pages.map((pageItem) => pageItem.id === pageId
-        ? { ...pageItem, elements: pageItem.elements.filter((element) => !selectedElementIds.includes(element.id)) }
+        ? { ...pageItem, elements: pageItem.elements.filter((element) => !elementIds.includes(element.id)) }
         : pageItem)
       return { notebook: { ...state.notebook, pages, updatedAt: Date.now() }, history: [...state.history, previousNotebook], future: [] }
     })
     setSelectedElementIds([])
+    setSelectedTextId(null)
+    setSelectedShapeId(null)
+    setSelectedShapeIds([])
+  }
+
+  const duplicateSelectedElements = () => {
+    if (selectedActionElements.length === 0) return
+    const groupIds = new Map<string, string>()
+    const copies = selectedActionElements.map((element): NoteElement => {
+      const copy = structuredClone(element)
+      copy.id = crypto.randomUUID()
+      if (copy.groupId) {
+        if (!groupIds.has(copy.groupId)) groupIds.set(copy.groupId, crypto.randomUUID())
+        copy.groupId = groupIds.get(copy.groupId)
+      }
+      if (copy.type === 'stroke') {
+        copy.points = copy.points.map((point) => ({
+          ...point,
+          x: Math.max(0, Math.min(width, point.x + 24)),
+          y: Math.max(0, Math.min(height, point.y + 24)),
+        }))
+      } else {
+        copy.x = Math.max(0, Math.min(width - copy.width, copy.x + 24))
+        copy.y = Math.max(0, Math.min(height - copy.height, copy.y + 24))
+      }
+      return copy
+    })
+    useDocumentStore.setState((state) => {
+      if (!state.notebook) return state
+      const previousNotebook = structuredClone(state.notebook)
+      const pages = state.notebook.pages.map((pageItem) => pageItem.id === pageId
+        ? { ...pageItem, elements: [...pageItem.elements, ...copies] }
+        : pageItem)
+      return { notebook: { ...state.notebook, pages, updatedAt: Date.now() }, history: [...state.history, previousNotebook], future: [] }
+    })
+    setSelectedElementIds(copies.map((element) => element.id))
+    setSelectedTextId(null)
+    setSelectedShapeId(null)
+    setSelectedShapeIds([])
   }
 
   const beginImageCrop = () => {
@@ -5316,37 +5310,42 @@ function NoteCanvas({
 
         const pdfPage = pageItem as PdfPage
 
-        if (pdfPage.pdfBackground) {
+        let pdfImageSource = pdfPage.pdfBackground
+        let generatedPdfImageUrl: string | null = null
+        if (!pdfImageSource && pdfPage.pdfAssetId && pdfPage.pdfPageNumber) {
+          const renderedPage = await renderPdfPageImage(
+            pdfPage.pdfAssetId,
+            pdfPage.pdfPageNumber,
+            2000,
+          )
+          pdfImageSource = renderedPage.url
+          generatedPdfImageUrl = renderedPage.url
+        }
+
+        if (pdfImageSource) {
           const pdfImage = new Image()
-          pdfImage.src = pdfPage.pdfBackground
+          pdfImage.src = pdfImageSource
 
-          await new Promise<void>((resolve, reject) => {
-            pdfImage.onload = () => resolve()
-            pdfImage.onerror = () =>
-              reject(
-                new Error(
-                  'Unable to load a PDF page during export.',
-                ),
-              )
-          })
+          try {
+            await new Promise<void>((resolve, reject) => {
+              pdfImage.onload = () => resolve()
+              pdfImage.onerror = () => reject(new Error('Unable to load a PDF page during export.'))
+            })
 
-          const imageScale = Math.min(
-            logicalWidth / pdfImage.naturalWidth,
-            logicalHeight / pdfImage.naturalHeight,
-          )
+            const imageScale = Math.min(
+              logicalWidth / pdfImage.naturalWidth,
+              logicalHeight / pdfImage.naturalHeight,
+            )
 
-          const imageWidth = pdfImage.naturalWidth * imageScale
-          const imageHeight = pdfImage.naturalHeight * imageScale
-          const imageX = (logicalWidth - imageWidth) / 2
-          const imageY = (logicalHeight - imageHeight) / 2
+            const imageWidth = pdfImage.naturalWidth * imageScale
+            const imageHeight = pdfImage.naturalHeight * imageScale
+            const imageX = (logicalWidth - imageWidth) / 2
+            const imageY = (logicalHeight - imageHeight) / 2
 
-          exportContext.drawImage(
-            pdfImage,
-            imageX,
-            imageY,
-            imageWidth,
-            imageHeight,
-          )
+            exportContext.drawImage(pdfImage, imageX, imageY, imageWidth, imageHeight)
+          } finally {
+            if (generatedPdfImageUrl) URL.revokeObjectURL(generatedPdfImageUrl)
+          }
         } else if (pageItem.background === 'ruled') {
           exportContext.strokeStyle = '#dfe3e8'
           exportContext.lineWidth = 1
@@ -5575,24 +5574,6 @@ function NoteCanvas({
         )}
       </div>
 
-      {(page as PdfPage | undefined)?.pdfBackground && (
-        <img
-          src={(page as PdfPage).pdfBackground}
-          alt=""
-          draggable={false}
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            objectFit: 'contain',
-            pointerEvents: 'none',
-            userSelect: 'none',
-            zIndex: 0,
-          }}
-        />
-      )}
-
       <canvas
         ref={canvasRef}
         className="note-canvas"
@@ -5696,15 +5677,20 @@ function NoteCanvas({
         <button className="selection-rotate-handle" aria-label="Rotate selection" title="Rotate selection" onPointerDown={startSelectionRotate} onPointerMove={moveSelectionRotate} onPointerUp={finishSelectionRotate} onPointerCancel={finishSelectionRotate} />
         <button className="selection-resize-handle" aria-label="Resize selection" title="Resize selection" onPointerDown={startSelectionResize} onPointerMove={moveSelectionResize} onPointerUp={finishSelectionResize} onPointerCancel={finishSelectionResize} />
       </div>}
-      {(activeTool === 'select' || activeTool === 'lasso') && selectedBounds && !imageCropDraft && !isStickyDragging && <button
-        type="button"
-        className="selection-delete-button"
+      {selectedActionIds.length > 0 && !shapeHasDedicatedToolbar && !editingTextId && !isDraggingText && !stickyEditing && !imageCropDraft && !isStickyDragging && <div
+        className="selection-action-toolbar"
+        role="toolbar"
+        aria-label="Selected object actions"
         onPointerDown={(event) => event.stopPropagation()}
-        onClick={deleteSelectedElements}
-        aria-label={`Delete ${selectedElementIds.length} selected ${selectedElementIds.length === 1 ? 'item' : 'items'}`}
-        title={`Delete ${selectedElementIds.length === 1 ? 'selection' : `${selectedElementIds.length} selected items`}`}
-        style={{ left: `${Math.max(4, Math.min(width - 96, selectedBounds.x + selectedBounds.width - 84)) / width * 100}%`, top: `${Math.max(4, selectedBounds.y - 48) / height * 100}%` }}
-      ><Trash2 size={16} /><span>Delete</span></button>}
+        style={{ left: 12, top: 12 }}
+      >
+        <button type="button" className="selection-action-button" onClick={duplicateSelectedElements} aria-label={`Duplicate ${selectedActionIds.length === 1 ? 'selection' : `${selectedActionIds.length} selected items`}`}>
+          <Copy size={15} /> <span>Duplicate</span>
+        </button>
+        <button type="button" className="selection-action-button selection-action-button-danger" onClick={() => deleteSelectedElements()} aria-label={`Delete ${selectedActionIds.length === 1 ? 'selection' : `${selectedActionIds.length} selected items`}`}>
+          <Trash2 size={15} /> <span>Delete</span>
+        </button>
+      </div>}
       {(activeTool === 'select' || activeTool === 'lasso') && selectedImage && selectedBounds && !imageCropDraft && <div
         className="image-edit-toolbar"
         onPointerDown={(event) => event.stopPropagation()}
@@ -5819,6 +5805,10 @@ function NoteCanvas({
             return null
           }
 
+          const pageRect = canvasRef.current?.getBoundingClientRect()
+          const canvasScaleX = (pageRect?.width ?? width) / width
+          const canvasScaleY = (pageRect?.height ?? height) / height
+
           return (
             <div
               className="shape-selection-box"
@@ -5859,10 +5849,11 @@ function NoteCanvas({
                 className="shape-style-toolbar"
                 style={{
                   position: 'absolute',
-                  left: '50%',
-                  top: 'calc(100% + 14px)',
-                  transform: 'translateX(-50%)',
+                  left: `${12 - selectedShape.x * canvasScaleX}px`,
+                  top: `${12 - selectedShape.y * canvasScaleY}px`,
+                  transform: 'none',
                   display: 'flex',
+                  flexWrap: 'wrap',
                   alignItems: 'center',
                   gap: '10px',
                   padding: '8px 10px',
@@ -5873,9 +5864,31 @@ function NoteCanvas({
                   pointerEvents: 'auto',
                   whiteSpace: 'nowrap',
                   zIndex: 20,
+                  width: 'max-content',
+                  maxWidth: `${Math.max(220, (pageRect?.width ?? width) - 24)}px`,
+                  maxHeight: `${Math.max(120, (pageRect?.height ?? height) - 24)}px`,
+                  overflow: 'auto',
                 }}
                 onPointerDown={(event) => event.stopPropagation()}
               >
+                <button
+                  type="button"
+                  onClick={() => duplicateSelectedShape(pageId, selectedShape.id)}
+                  style={{ height: '36px', minWidth: '88px', padding: '0 12px', border: '1px solid #dedee2', borderRadius: '7px', background: '#ffffff', fontWeight: 600, cursor: 'pointer' }}
+                  title="Duplicate shape"
+                  aria-label="Duplicate shape"
+                >
+                  Duplicate
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteSelectedElements([selectedShape.id])}
+                  style={{ height: '36px', minWidth: '76px', padding: '0 12px', border: '1px solid #efc4c4', borderRadius: '7px', background: '#fff5f5', color: '#9c2a2a', fontWeight: 600, cursor: 'pointer' }}
+                  title="Delete shape"
+                  aria-label="Delete shape"
+                >
+                  Delete
+                </button>
                 <label
                   style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px' }}
                   title="Stroke color"
@@ -5975,24 +5988,6 @@ function NoteCanvas({
                     <option value="dotted">Dotted</option>
                   </select>
                 </label>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    duplicateSelectedShape(pageId, selectedShape.id)
-                  }
-                  style={{
-                    height: '28px',
-                    padding: '0 9px',
-                    border: '1px solid #dedee2',
-                    borderRadius: '5px',
-                    background: '#ffffff',
-                    cursor: 'pointer',
-                  }}
-                  title="Duplicate shape"
-                >
-                  Duplicate
-                </button>
 
                 <button
                   type="button"

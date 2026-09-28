@@ -30,13 +30,21 @@ function AudioRecorder({ notebookId, notebookTitle }: Props) {
 
   useEffect(() => {
     let cancelled = false
-    if (!notebookId) { setRecordings([]); return }
+    const createdUrls: Array<{ id: string; url: string }> = []
+    const objectUrls = urlsRef.current
+    const audioElements = audioElementsRef.current
+    if (!notebookId) {
+      setRecordings([])
+      setRecordingUrls({})
+      return
+    }
     void listAudioRecordings(notebookId).then((items) => {
       if (!cancelled) {
         const urls: Record<string, string> = {}
         for (const recording of items) {
           const url = URL.createObjectURL(recording.blob)
           urlsRef.current.set(recording.id, url)
+          createdUrls.push({ id: recording.id, url })
           urls[recording.id] = url
         }
         setRecordingUrls(urls)
@@ -45,7 +53,20 @@ function AudioRecorder({ notebookId, notebookTitle }: Props) {
     }).catch((cause: unknown) => {
       if (!cancelled) setError(cause instanceof Error ? cause.message : 'Unable to load recordings.')
     })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      for (const { id, url } of createdUrls) {
+        URL.revokeObjectURL(url)
+        if (objectUrls.get(id) === url) objectUrls.delete(id)
+        const audio = audioElements.get(id)
+        audio?.pause()
+        if (audio) {
+          audio.removeAttribute('src')
+          audio.load()
+        }
+        audioElements.delete(id)
+      }
+    }
   }, [notebookId])
 
   useEffect(() => {

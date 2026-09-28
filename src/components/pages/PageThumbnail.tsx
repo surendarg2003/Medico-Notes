@@ -13,9 +13,12 @@ import type {
   StrokeElement,
   TextElement,
 } from '../../types/document'
+import PdfPageImage from './PdfPageImage'
 
 interface PdfPageLike {
   pdfBackground?: string
+  pdfAssetId?: string
+  pdfPageNumber?: number
   pdfSourceName?: string
 }
 
@@ -255,7 +258,7 @@ function PageThumbnail({
   const inputRef = useRef<HTMLInputElement>(null)
 
   const pdfPage = page as Page & PdfPageLike
-  const isPdfPage = Boolean(pdfPage.pdfBackground)
+  const isPdfPage = Boolean(pdfPage.pdfBackground || pdfPage.pdfAssetId)
 
   const strokes = page.elements.filter(
     (element): element is StrokeElement =>
@@ -330,7 +333,7 @@ function PageThumbnail({
             overflow: 'hidden',
           }}
         >
-          {isPdfPage && (
+          {pdfPage.pdfBackground && (
             <img
               src={pdfPage.pdfBackground}
               alt={`PDF page ${pageNumber}`}
@@ -346,6 +349,15 @@ function PageThumbnail({
                 userSelect: 'none',
                 zIndex: 0,
               }}
+            />
+          )}
+          {pdfPage.pdfAssetId && pdfPage.pdfPageNumber && (
+            <PdfPageImage
+              assetId={pdfPage.pdfAssetId}
+              pageNumber={pdfPage.pdfPageNumber}
+              enabled={false}
+              maxDimension={300}
+              className="page-thumbnail-pdf-preview"
             />
           )}
 

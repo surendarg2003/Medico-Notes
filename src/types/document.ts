@@ -103,6 +103,12 @@ export interface Page {
   title: string
   elements: NoteElement[]
   background: 'plain' | 'ruled' | 'grid' | 'dotted'
+  pdfAssetId?: string
+  pdfPageNumber?: number
+  pdfSourceName?: string
+  pdfText?: string
+  /** Legacy embedded page image used by notebooks created before lazy PDF import. */
+  pdfBackground?: string
 }
 
 export interface Notebook {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useDocumentStore } from '../../stores/documentStore'
 import { usePageStore } from '../../stores/pageStore'
 import NoteCanvas from '../../canvas/NoteCanvas'
+import PdfPageImage from './PdfPageImage'
 
 function PagePanel() {
   const notebook = useDocumentStore((state) => state.notebook)
@@ -74,9 +75,7 @@ function PagePanel() {
     pageItem: (typeof notebook.pages)[number],
     renderCanvas = true,
   ) => {
-    const hasPdfBackground = Boolean(
-      (pageItem as typeof pageItem & { pdfBackground?: string }).pdfBackground,
-    )
+    const hasPdfBackground = Boolean(pageItem.pdfBackground || pageItem.pdfAssetId)
 
     return (
       <div className={`note-page note-page-${pageItem.background}`}>
@@ -106,11 +105,46 @@ function PagePanel() {
         </div>
 
         <div className={`note-page-content${hasPdfBackground ? ' note-page-content-pdf' : ''}`}>
-          {renderCanvas ? (
-            <NoteCanvas pageId={pageItem.id} width={760} height={900} />
-          ) : (
-            <div className="fullscreen-page-placeholder" aria-hidden="true" />
-          )}
+          <div className="note-page-canvas-frame">
+            {pageItem.pdfBackground && (
+              <img
+                className="note-page-pdf-background"
+                src={pageItem.pdfBackground}
+                alt=""
+                draggable={false}
+              />
+            )}
+            {pageItem.pdfAssetId && pageItem.pdfPageNumber && (
+              <PdfPageImage
+                assetId={pageItem.pdfAssetId}
+                pageNumber={pageItem.pdfPageNumber}
+                enabled={renderCanvas}
+                maxDimension={pageItem.id === activePageId ? 2800 : 1000}
+                priority={pageItem.id === activePageId}
+                extractText
+                className="note-page-pdf-background"
+                onText={(text) => {
+                  if (pageItem.pdfText === text) return
+                  useDocumentStore.setState((state) => {
+                    if (!state.notebook) return state
+                    return {
+                      notebook: {
+                        ...state.notebook,
+                        pages: state.notebook.pages.map((item) =>
+                          item.id === pageItem.id ? { ...item, pdfText: text } : item,
+                        ),
+                      },
+                    }
+                  })
+                }}
+              />
+            )}
+            {renderCanvas ? (
+              <NoteCanvas pageId={pageItem.id} width={760} height={900} />
+            ) : (
+              <div className="fullscreen-page-placeholder" aria-hidden="true" />
+            )}
+          </div>
         </div>
       </div>
     )

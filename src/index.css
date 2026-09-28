@@ -905,6 +905,56 @@ textarea {
   position: relative;
 }
 
+.note-page-canvas-frame {
+  position: relative;
+  width: 100%;
+  min-height: inherit;
+}
+
+.note-page-pdf-background {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.pdf-page-image {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  pointer-events: none;
+}
+
+.pdf-page-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.pdf-page-image-status {
+  color: #8a8d91;
+  font-size: 12px;
+}
+
+.note-page-canvas-frame > .note-canvas-container,
+.note-page-canvas-frame > .fullscreen-page-placeholder {
+  position: relative;
+  z-index: 1;
+}
+
 .note-page-header select {
   padding: 5px 8px;
   border: 1px solid #dedee2;
@@ -1169,7 +1219,7 @@ html.app-note-focus .page-panel-scroll-mode {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  scroll-snap-type: y proximity;
+  scroll-snap-type: none;
   scrollbar-width: thin;
   scrollbar-color: #aeb0b3 transparent;
   -webkit-overflow-scrolling: touch;
@@ -1178,21 +1228,36 @@ html.app-note-focus .page-panel-scroll-mode {
 html.app-note-focus .fullscreen-scroll-page {
   flex: 0 0 auto;
   width: 100%;
-  height: calc(100dvh - 60px);
-  min-height: 280px;
-  scroll-snap-align: start;
+  height: auto;
+  min-height: calc(100dvh - 60px);
 }
 
 html.app-note-focus .fullscreen-scroll-page .note-page {
   width: 100%;
-  height: 100%;
+  height: auto;
   min-height: 0;
 }
 
 html.app-note-focus .fullscreen-scroll-page .note-page-content {
-  flex: 1 1 auto;
-  height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  height: auto;
   min-height: 0;
+  overflow: visible;
+}
+
+html.app-note-focus .note-page-canvas-frame {
+  flex: 0 0 auto;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 0;
+  aspect-ratio: 760 / 900;
+  background-color: #fff;
+  background-image: inherit;
 }
 
 .fullscreen-page-placeholder {
@@ -1216,18 +1281,24 @@ html.app-note-focus .note-page-header {
   flex: 0 0 auto;
   min-height: 42px;
   padding: 6px 14px;
+  touch-action: pan-y;
 }
 
 html.app-note-focus .note-page-content {
-  flex: 1 1 auto;
-  height: 0;
+  flex: 0 0 auto;
+  height: auto;
   min-height: 0;
 }
 
 html.app-note-focus .note-canvas-container,
 html.app-note-focus .note-canvas {
+  width: 100%;
   height: 100%;
   min-height: 0;
+}
+
+html.app-note-focus .note-canvas {
+  touch-action: none;
 }
 
 html.app-note-focus .page-action-buttons {
@@ -1276,7 +1347,7 @@ html.app-fullscreen-fallback .app-shell {
   }
 
   html.app-note-focus .fullscreen-scroll-page {
-    height: calc(100dvh - 54px);
+    min-height: calc(100dvh - 54px);
   }
 }
 
@@ -2521,7 +2592,12 @@ html.app-fullscreen-fallback .app-shell {
 }
 
 .selection-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   min-width: 82px;
+  min-height: 44px;
   padding: 7px 12px;
   border: 1px solid #dfe0e3;
   border-radius: 8px;
