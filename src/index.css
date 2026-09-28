@@ -810,6 +810,69 @@ textarea {
   touch-action: none;
 }
 
+.live-ink-canvas {
+  position: absolute !important;
+  top: 0;
+  left: 0;
+  z-index: 2 !important;
+  pointer-events: none;
+}
+
+.page-action-buttons {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.74;
+  transition: opacity 140ms ease;
+}
+
+.page-action-buttons:hover,
+.page-action-buttons:focus-within {
+  opacity: 1;
+}
+
+.page-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(210, 211, 214, 0.8);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #292a2d;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.page-action-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+html.app-fullscreen-fallback,
+html.app-fullscreen-fallback body,
+html.app-fullscreen-fallback #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+html.app-fullscreen-fallback .app-shell {
+  position: fixed;
+  z-index: 10000;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+}
+
 /* =========================================================
    DRAWING TOOLS
    ========================================================= */

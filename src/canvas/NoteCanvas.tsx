@@ -839,6 +839,8 @@ function NoteCanvas({
   height,
 }: NoteCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const liveInkCanvasRef = useRef<HTMLCanvasElement>(null)
+  const liveInkFrameRef = useRef<number | null>(null)
   const textInputRef = useRef<HTMLTextAreaElement>(null)
   const currentPointsRef = useRef<Point[]>([])
 
@@ -877,6 +879,16 @@ function NoteCanvas({
 
   const [textValue, setTextValue] = useState('')
   const [stickyEditing, setStickyEditing] = useState<{ id: string; text: string } | null>(null)
+
+  const clearLiveInkPreview = () => {
+    if (liveInkFrameRef.current !== null) {
+      cancelAnimationFrame(liveInkFrameRef.current)
+      liveInkFrameRef.current = null
+    }
+    const liveCanvas = liveInkCanvasRef.current
+    const context = liveCanvas?.getContext('2d')
+    context?.clearRect(0, 0, width, height)
+  }
 
   const [textFontSize, setTextFontSize] = useState(22)
 
@@ -1065,26 +1077,18 @@ function NoteCanvas({
       ).toString()
 
       const fileData = new Uint8Array(await file.arrayBuffer())
-      const pdf = await pdfjsLib.getDocument({
+      const pdfLoadingTask = pdfjsLib.getDocument({
         data: fileData,
-      }).promise
+      })
+      const pdf = await pdfLoadingTask.promise
 
       const importedPages: PdfPage[] = []
 
-      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const renderPdfPage = async (pageNumber: number): Promise<PdfPage> => {
         const pdfPage = await pdf.getPage(pageNumber)
-        const viewport = pdfPage.getViewport({ scale: 1.5 })
-        const textReader = pdfPage.streamTextContent().getReader()
-        const pdfTextItems: { str?: string }[] = []
-        while (true) {
-          const { value, done } = await textReader.read()
-          if (done) break
-          pdfTextItems.push(...value.items)
-        }
-        const pdfText = pdfTextItems
-          .map((item) => ('str' in item ? item.str : ''))
-          .filter(Boolean)
-          .join(' ')
+        // A 1.25 scale stays crisp at the page's display size while cutting
+        // raster work and encoded image size compared with 1.5x rendering.
+        const viewport = pdfPage.getViewport({ scale: 1.25 })
         const renderCanvas = document.createElement('canvas')
         const context = renderCanvas.getContext('2d')
 
@@ -1095,22 +1099,55 @@ function NoteCanvas({
         renderCanvas.width = Math.ceil(viewport.width)
         renderCanvas.height = Math.ceil(viewport.height)
 
-        await pdfPage.render({
-          canvas: renderCanvas,
-          canvasContext: context,
-          viewport,
-        }).promise
+        const textPromise = (async () => {
+          const textReader = pdfPage.streamTextContent().getReader()
+          const pdfTextItems: { str?: string }[] = []
+          try {
+            while (true) {
+              const { value, done } = await textReader.read()
+              if (done) break
+              pdfTextItems.push(...value.items)
+            }
+          } finally {
+            textReader.releaseLock()
+          }
+          return pdfTextItems
+            .map((item) => ('str' in item ? item.str : ''))
+            .filter(Boolean)
+            .join(' ')
+        })()
 
-        importedPages.push({
+        const [, pdfText] = await Promise.all([
+          pdfPage.render({ canvas: renderCanvas, canvasContext: context, viewport }).promise,
+          textPromise,
+        ])
+        const pdfBackground = renderCanvas.toDataURL('image/png')
+        renderCanvas.width = 0
+        renderCanvas.height = 0
+
+        return {
           id: crypto.randomUUID(),
           title: `${file.name.replace(/\.pdf$/i, '')} - Page ${pageNumber}`,
           elements: [],
           background: 'plain',
-          pdfBackground: renderCanvas.toDataURL('image/png'),
+          pdfBackground,
           pdfSourceName: file.name,
           pdfText,
-        })
+        }
       }
+
+      // Render a small batch in parallel to reduce total wait time without
+      // allocating a canvas for every page of a large document at once.
+      for (let firstPage = 1; firstPage <= pdf.numPages; firstPage += 2) {
+        const batch = await Promise.all(
+          [firstPage, firstPage + 1]
+            .filter((pageNumber) => pageNumber <= pdf.numPages)
+            .map(renderPdfPage),
+        )
+        importedPages.push(...batch)
+      }
+
+      await pdfLoadingTask.destroy()
 
       if (importedPages.length === 0) {
         throw new Error('The PDF contains no pages.')
@@ -1532,7 +1569,8 @@ function NoteCanvas({
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
+    const liveCanvas = liveInkCanvasRef.current
+    if (!canvas || !liveCanvas) return
 
     const resizeForDisplay = () => {
       const rect = canvas.getBoundingClientRect()
@@ -1544,20 +1582,41 @@ function NoteCanvas({
       const pixelRatio = Math.min(window.devicePixelRatio || 1, 2)
       const pixelWidth = Math.round(rect.width * pixelRatio)
       const pixelHeight = Math.round(rect.height * pixelRatio)
-      if (canvas.width === pixelWidth && canvas.height === pixelHeight) return
+      const mainCanvasChanged = canvas.width !== pixelWidth || canvas.height !== pixelHeight
+      if (mainCanvasChanged) {
+        canvas.width = pixelWidth
+        canvas.height = pixelHeight
+        const context = canvas.getContext('2d')
+        if (context) {
+          context.setTransform(pixelWidth / width, 0, 0, pixelHeight / height, 0, 0)
+          redrawCanvasEffect(context)
+        }
+      }
 
-      canvas.width = pixelWidth
-      canvas.height = pixelHeight
-      const context = canvas.getContext('2d')
-      if (!context) return
-      context.setTransform(pixelWidth / width, 0, 0, pixelHeight / height, 0, 0)
-      redrawCanvasEffect(context)
+      if (liveCanvas.width !== pixelWidth || liveCanvas.height !== pixelHeight) {
+        liveCanvas.width = pixelWidth
+        liveCanvas.height = pixelHeight
+        liveCanvas.getContext('2d')?.setTransform(
+          pixelWidth / width,
+          0,
+          0,
+          pixelHeight / height,
+          0,
+          0,
+        )
+      }
     }
 
     const observer = new ResizeObserver(resizeForDisplay)
     observer.observe(canvas)
     resizeForDisplay()
-    return () => observer.disconnect()
+    return () => {
+      observer.disconnect()
+      if (liveInkFrameRef.current !== null) {
+        cancelAnimationFrame(liveInkFrameRef.current)
+        liveInkFrameRef.current = null
+      }
+    }
   }, [width, height])
 
   useEffect(() => {
@@ -2699,6 +2758,7 @@ function NoteCanvas({
 
     setSelectedTextId(null)
 
+    clearLiveInkPreview()
     currentPointsRef.current = [point]
     setIsDrawing(true)
 
@@ -2866,55 +2926,39 @@ function NoteCanvas({
       activeTool !== 'text' &&
       isDrawing
     ) {
-      const point = getPoint(event)
-      currentPointsRef.current.push(point)
-
-      const canvas = canvasRef.current
-
-      if (!canvas) {
-        return
+      const coalescedEvents = event.nativeEvent.getCoalescedEvents?.() ?? []
+      if (coalescedEvents.length > 0 && !rulerVisible) {
+        currentPointsRef.current.push(...coalescedEvents.map((sample) => ({
+          ...getPointFromClient(sample.clientX, sample.clientY),
+          pressure: sample.pressure,
+          timestamp: Date.now(),
+        })))
+      } else {
+        currentPointsRef.current.push(getPoint(event))
       }
 
-      const context = canvas.getContext('2d')
+      if (liveInkFrameRef.current === null) {
+        liveInkFrameRef.current = requestAnimationFrame(() => {
+          liveInkFrameRef.current = null
+          const previewCanvas = liveInkCanvasRef.current
+          const context = previewCanvas?.getContext('2d')
+          if (!previewCanvas || !context) return
 
-      if (!context) {
-        return
+          context.clearRect(0, 0, width, height)
+          let strokeWidth = widthValue
+          let strokeOpacity = opacity
+
+          if (activeTool === 'pencil') {
+            strokeWidth = Math.max(1, widthValue * 0.7)
+            strokeOpacity = Math.min(opacity, 0.55)
+          } else if (activeTool === 'highlighter') {
+            strokeWidth = Math.max(10, widthValue * 3)
+            strokeOpacity = Math.min(opacity, 0.3)
+          }
+
+          drawLiveStroke(context, currentPointsRef.current, color, strokeWidth, strokeOpacity)
+        })
       }
-
-      redrawCanvas(context)
-
-      let strokeWidth = widthValue
-      let strokeOpacity = opacity
-
-      if (activeTool === 'pencil') {
-        strokeWidth = Math.max(
-          1,
-          widthValue * 0.7,
-        )
-        strokeOpacity = Math.min(
-          opacity,
-          0.55,
-        )
-      }
-
-      if (activeTool === 'highlighter') {
-        strokeWidth = Math.max(
-          10,
-          widthValue * 3,
-        )
-        strokeOpacity = Math.min(
-          opacity,
-          0.3,
-        )
-      }
-
-      drawLiveStroke(
-        context,
-        currentPointsRef.current,
-        color,
-        strokeWidth,
-        strokeOpacity,
-      )
 
       return
     }
@@ -4178,6 +4222,8 @@ function NoteCanvas({
   const stopDrawing = (
     event: PointerEvent<HTMLCanvasElement>,
   ) => {
+    clearLiveInkPreview()
+
     if (activeTool === 'laser') {
       setIsDrawing(false)
       const laserCanvas = canvasRef.current
@@ -5146,16 +5192,7 @@ function NoteCanvas({
       }`}
     >
       <div
-        style={{
-          position: 'absolute',
-          top: '12px',
-          right: '12px',
-          zIndex: 60,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-end',
-          gap: '6px',
-        }}
+        className="page-action-buttons"
       >
         <input
           ref={pdfInputRef}
@@ -5183,67 +5220,39 @@ function NoteCanvas({
 
         <button
           type="button"
+          className="page-action-button"
           onClick={() => imageInputRef.current?.click()}
           title="Insert image"
           aria-label="Insert image"
-          style={{ display: 'flex', alignItems: 'center', gap: '7px', height: '36px', padding: '0 11px', border: '1px solid #d8d8de', borderRadius: '8px', background: '#ffffff', color: '#333338', cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}
         >
           <ImagePlus size={16} />
-          <span>Insert image</span>
         </button>
 
         <button
           type="button"
+          className="page-action-button"
           onClick={() => pdfInputRef.current?.click()}
           disabled={isImportingPdf}
           title="Import PDF"
           aria-label="Import PDF"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '7px',
-            height: '36px',
-            padding: '0 11px',
-            border: '1px solid #d8d8de',
-            borderRadius: '8px',
-            background: '#ffffff',
-            color: '#333338',
-            cursor: isImportingPdf ? 'wait' : 'pointer',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-            opacity: isImportingPdf ? 0.7 : 1,
-          }}
         >
           {isImportingPdf ? (
             <Loader2 size={16} className="freenotes-spin" />
           ) : (
             <FileUp size={16} />
           )}
-          <span>{isImportingPdf ? 'Importing…' : 'Import PDF'}</span>
         </button>
 
         <button
           type="button"
+          className="page-action-button"
           onClick={() => {
             void exportNotebookAsPdf()
           }}
           title="Export notebook as PDF"
           aria-label="Export notebook as PDF"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '7px',
-            height: '36px',
-            padding: '0 11px',
-            border: '1px solid #d8d8de',
-            borderRadius: '8px',
-            background: '#ffffff',
-            color: '#333338',
-            cursor: 'pointer',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-          }}
         >
           <FileDown size={16} />
-          <span>Export PDF</span>
         </button>
 
         {pdfImportError && (
@@ -5293,6 +5302,11 @@ function NoteCanvas({
         onPointerUp={stopDrawing}
         onPointerCancel={stopDrawing}
         onDoubleClick={handleDoubleClick}
+      />
+      <canvas
+        ref={liveInkCanvasRef}
+        className="note-canvas live-ink-canvas"
+        aria-hidden="true"
       />
 
       {rulerVisible && <div

@@ -19,6 +19,8 @@ import {
   Crosshair,
   StickyNote,
   Ruler,
+  Expand,
+  Minimize2,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useDocumentStore } from '../../stores/documentStore'
@@ -63,8 +65,55 @@ function TopToolbar() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
   const searchContainerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const syncFullscreenState = () => {
+      const nativeFullscreen = document.fullscreenElement === document.documentElement
+      if (nativeFullscreen) document.documentElement.classList.remove('app-fullscreen-fallback')
+      setIsFullscreen(nativeFullscreen || document.documentElement.classList.contains('app-fullscreen-fallback'))
+    }
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !document.fullscreenElement) {
+        document.documentElement.classList.remove('app-fullscreen-fallback')
+        setIsFullscreen(false)
+      }
+    }
+
+    document.addEventListener('fullscreenchange', syncFullscreenState)
+    window.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenState)
+      window.removeEventListener('keydown', handleEscape)
+    }
+  }, [])
+
+  const toggleFullscreen = async () => {
+    if (isFullscreen) {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        await document.exitFullscreen()
+      } else {
+        document.documentElement.classList.remove('app-fullscreen-fallback')
+        setIsFullscreen(false)
+      }
+      return
+    }
+
+    if (document.documentElement.requestFullscreen) {
+      try {
+        await document.documentElement.requestFullscreen()
+        document.documentElement.classList.remove('app-fullscreen-fallback')
+        return
+      } catch {
+        // Fall back to an app-sized view in browsers that deny fullscreen.
+      }
+    }
+
+    document.documentElement.classList.add('app-fullscreen-fallback')
+    setIsFullscreen(true)
+  }
 
   const exportNotebook = () => {
     if (!notebook) return
@@ -166,7 +215,7 @@ function TopToolbar() {
   }, [searchOpen])
 
   return (
-    <header className="top-toolbar">
+    <header className={`top-toolbar${isFullscreen ? ' top-toolbar-fullscreen' : ''}`}>
       <div className="toolbar-left">
         <button className="toolbar-note-selector" onClick={() => {
           if (!notebook) return
@@ -438,6 +487,14 @@ function TopToolbar() {
       </div>
 
       <div className="toolbar-right">
+        <button
+          className="toolbar-button"
+          onClick={() => void toggleFullscreen()}
+          aria-label={isFullscreen ? 'Exit full screen' : 'Enter full screen'}
+          title={isFullscreen ? 'Exit full screen' : 'Full screen'}
+        >
+          {isFullscreen ? <Minimize2 size={18} /> : <Expand size={18} />}
+        </button>
         <AudioRecorder notebookId={notebook?.id ?? null} notebookTitle={notebook?.title ?? 'Notebook'} />
         <div className="toolbar-search-container" ref={searchContainerRef}>
           <button
