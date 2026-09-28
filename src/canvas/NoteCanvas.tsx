@@ -17,6 +17,7 @@ import {
   ImagePlus,
   Italic,
   Loader2,
+  Trash2,
   Underline,
   X,
 } from 'lucide-react'
@@ -173,14 +174,31 @@ function drawStroke(
     return
   }
 
-  traceSmoothStroke(context, points)
   context.strokeStyle = stroke.color
-  context.lineWidth = stroke.width
   context.globalAlpha = stroke.opacity
   context.lineCap = 'round'
   context.lineJoin = 'round'
-  context.stroke()
+  if (points.some((point) => point.pressure !== undefined)) {
+    drawPressureSegments(context, points, stroke.width)
+  } else {
+    traceSmoothStroke(context, points)
+    context.lineWidth = stroke.width
+    context.stroke()
+  }
   context.restore()
+}
+
+function drawPressureSegments(context: CanvasRenderingContext2D, points: Point[], baseWidth: number) {
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1]
+    const point = points[index]
+    const pressure = Math.max(0.08, Math.min(1, ((previous.pressure ?? 0.5) + (point.pressure ?? 0.5)) / 2))
+    context.beginPath()
+    context.moveTo(previous.x, previous.y)
+    context.lineTo(point.x, point.y)
+    context.lineWidth = baseWidth * (0.35 + pressure * 1.3)
+    context.stroke()
+  }
 }
 
 function traceSmoothStroke(
@@ -546,36 +564,37 @@ function drawStickyNote(context: CanvasRenderingContext2D, sticky: StickyNoteEle
   context.restore()
 }
 
-function drawLiveStroke(
+function drawLiveStrokeSlice(
   context: CanvasRenderingContext2D,
   points: Point[],
+  startIndex: number,
   color: string,
   width: number,
   opacity: number,
 ) {
-  if (points.length === 0) {
-    return
-  }
-
+  if (points.length === 0) return
   context.save()
-  context.beginPath()
-
-  if (points.length === 1) {
-    context.arc(points[0].x, points[0].y, width / 2, 0, Math.PI * 2)
-    context.fillStyle = color
-    context.globalAlpha = opacity
-    context.fill()
-    context.restore()
-    return
-  }
-
-  traceSmoothStroke(context, points)
   context.strokeStyle = color
-  context.lineWidth = width
   context.globalAlpha = opacity
   context.lineCap = 'round'
   context.lineJoin = 'round'
-  context.stroke()
+  if (startIndex === 0) {
+    const first = points[0]
+    context.beginPath()
+    context.arc(first.x, first.y, width * (0.35 + (first.pressure ?? 0.5) * 1.3) / 2, 0, Math.PI * 2)
+    context.fillStyle = color
+    context.fill()
+  }
+  for (let index = Math.max(1, startIndex); index < points.length; index += 1) {
+    const previous = points[index - 1]
+    const point = points[index]
+    const pressure = Math.max(0.08, Math.min(1, ((previous.pressure ?? 0.5) + (point.pressure ?? 0.5)) / 2))
+    context.beginPath()
+    context.moveTo(previous.x, previous.y)
+    context.lineTo(point.x, point.y)
+    context.lineWidth = width * (0.35 + pressure * 1.3)
+    context.stroke()
+  }
   context.restore()
 }
 
@@ -925,6 +944,9 @@ function NoteCanvas({
   const liveInkFrameRef = useRef<number | null>(null)
   const textInputRef = useRef<HTMLTextAreaElement>(null)
   const currentPointsRef = useRef<Point[]>([])
+  const liveRenderedPointCountRef = useRef(0)
+  const penInUseRef = useRef(false)
+  const lastPenActivityRef = useRef(0)
 
   const textDragRef = useRef<TextDragState | null>(null)
   const stickyDragRef = useRef<StickyDragState | null>(null)
@@ -969,6 +991,7 @@ function NoteCanvas({
   } | null>(null)
 
   const [textValue, setTextValue] = useState('')
+  const [textBoxWidth, setTextBoxWidth] = useState(400)
   const [stickyEditing, setStickyEditing] = useState<{ id: string; text: string } | null>(null)
 
   const clearLiveInkPreview = () => {
@@ -979,6 +1002,7 @@ function NoteCanvas({
     const liveCanvas = liveInkCanvasRef.current
     const context = liveCanvas?.getContext('2d')
     context?.clearRect(0, 0, width, height)
+    liveRenderedPointCountRef.current = 0
   }
 
   const [textFontSize, setTextFontSize] = useState(22)
@@ -1175,7 +1199,9 @@ function NoteCanvas({
         const pdfPage = await pdf.getPage(pageNumber)
         // A 1.25 scale stays crisp at the page's display size while cutting
         // raster work and encoded image size compared with 1.5x rendering.
-        const viewport = pdfPage.getViewport({ scale: 1.25 })
+        // Rasterise close to the visible page size. Higher resolutions add a
+        // lot of CPU and storage cost without improving the editor view.
+        const viewport = pdfPage.getViewport({ scale: pdf.numPages > 24 ? 0.82 : 1.05 })
         const renderCanvas = document.createElement('canvas')
         const context = renderCanvas.getContext('2d')
 
@@ -1208,7 +1234,9 @@ function NoteCanvas({
           pdfPage.render({ canvas: renderCanvas, canvasContext: context, viewport }).promise,
           textPromise,
         ])
-        const pdfBackground = renderCanvas.toDataURL('image/png')
+        // JPEG keeps imported page data much smaller than PNG, reducing both
+        // conversion time and the amount of notebook data written to storage.
+        const pdfBackground = renderCanvas.toDataURL('image/jpeg', 0.78)
         renderCanvas.width = 0
         renderCanvas.height = 0
 
@@ -1910,6 +1938,15 @@ function NoteCanvas({
       return
     }
 
+    const availableWidth = Math.max(120, Math.min(560, width - textPosition.x - 16))
+    const context = canvasRef.current?.getContext('2d')
+    if (context) {
+      context.font = `${textItalic ? 'italic ' : ''}${textBold ? 'bold ' : ''}${textFontSize}px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`
+      const widestLine = Math.max(0, ...textValue.split('\n').map((line) => context.measureText(line).width))
+      const measuredWidth = Math.max(120, Math.min(availableWidth, widestLine + 24))
+      setTextBoxWidth((current) => Math.abs(current - measuredWidth) > 2 ? measuredWidth : current)
+      textarea.style.width = `${measuredWidth}px`
+    }
     textarea.style.height = 'auto'
     textarea.style.height = `${Math.max(
       40,
@@ -1921,12 +1958,14 @@ function NoteCanvas({
     textBold,
     textItalic,
     textUnderline,
+    width,
     textPosition,
   ])
 
   useEffect(() => {
     setTextPosition(null)
     setTextValue('')
+    setTextBoxWidth(400)
     setTextFontSize(22)
     setTextBold(false)
     setTextItalic(false)
@@ -2501,6 +2540,7 @@ function NoteCanvas({
     })
 
     setTextValue(text.text)
+    setTextBoxWidth(text.width)
     setTextFontSize(text.fontSize)
     setTextBold(text.bold)
     setTextItalic(text.italic)
@@ -2512,6 +2552,7 @@ function NoteCanvas({
     if (!textPosition || !textValue.trim()) {
       setTextPosition(null)
       setTextValue('')
+      setTextBoxWidth(400)
       setEditingTextId(null)
       return
     }
@@ -2529,6 +2570,7 @@ function NoteCanvas({
             {
               ...editingText,
               text: textValue,
+              width: textBoxWidth,
               fontSize: textFontSize,
               bold: textBold,
               italic: textItalic,
@@ -2574,6 +2616,7 @@ function NoteCanvas({
                               element.height,
                               requiredHeight,
                             ),
+                            width: textBoxWidth,
                           }
                         : element,
                   ),
@@ -2609,7 +2652,7 @@ function NoteCanvas({
               type: 'text',
               x: textPosition.x,
               y: textPosition.y,
-              width: 400,
+              width: textBoxWidth,
               height: 100,
               text: textValue,
               fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -2629,7 +2672,7 @@ function NoteCanvas({
         type: 'text',
         x: textPosition.x,
         y: textPosition.y,
-        width: 400,
+        width: textBoxWidth,
         height: initialHeight,
         text: textValue,
         fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -2664,6 +2707,13 @@ function NoteCanvas({
   const handlePointerDown = (
     event: PointerEvent<HTMLCanvasElement>,
   ) => {
+    if (event.pointerType === 'pen') {
+      penInUseRef.current = true
+      lastPenActivityRef.current = performance.now()
+    } else if (event.pointerType === 'touch' && (penInUseRef.current || performance.now() - lastPenActivityRef.current < 900)) {
+      return
+    }
+
     const canvas = canvasRef.current
 
     if (!canvas) {
@@ -2995,6 +3045,12 @@ function NoteCanvas({
   const handlePointerMove = (
     event: PointerEvent<HTMLCanvasElement>,
   ) => {
+    if (event.pointerType === 'pen') {
+      lastPenActivityRef.current = performance.now()
+    } else if (event.pointerType === 'touch' && (penInUseRef.current || performance.now() - lastPenActivityRef.current < 900)) {
+      return
+    }
+
     if (activePageId !== pageId) {
       return
     }
@@ -3159,7 +3215,7 @@ function NoteCanvas({
           const context = previewCanvas?.getContext('2d')
           if (!previewCanvas || !context) return
 
-          context.clearRect(0, 0, width, height)
+          const startIndex = liveRenderedPointCountRef.current
           let strokeWidth = widthValue
           let strokeOpacity = opacity
 
@@ -3171,7 +3227,8 @@ function NoteCanvas({
             strokeOpacity = Math.min(opacity, 0.3)
           }
 
-          drawLiveStroke(context, currentPointsRef.current, color, strokeWidth, strokeOpacity)
+          drawLiveStrokeSlice(context, currentPointsRef.current, startIndex, color, strokeWidth, strokeOpacity)
+          liveRenderedPointCountRef.current = currentPointsRef.current.length
         })
       }
 
@@ -4437,6 +4494,11 @@ function NoteCanvas({
   const stopDrawing = (
     event: PointerEvent<HTMLCanvasElement>,
   ) => {
+    if (event.pointerType === 'pen') {
+      penInUseRef.current = false
+      lastPenActivityRef.current = performance.now()
+    }
+
     if (finishStickyDrag(event)) return
 
     if (eraserPointerIdRef.current === event.pointerId) {
@@ -4993,6 +5055,19 @@ function NoteCanvas({
   const selectionMoveDelta = selectionActionRef.current?.kind === 'move'
     ? { x: selectionActionRef.current.current.x - selectionActionRef.current.start.x, y: selectionActionRef.current.current.y - selectionActionRef.current.start.y }
     : { x: 0, y: 0 }
+
+  const deleteSelectedElements = () => {
+    if (selectedElementIds.length === 0) return
+    useDocumentStore.setState((state) => {
+      if (!state.notebook) return state
+      const previousNotebook = structuredClone(state.notebook)
+      const pages = state.notebook.pages.map((pageItem) => pageItem.id === pageId
+        ? { ...pageItem, elements: pageItem.elements.filter((element) => !selectedElementIds.includes(element.id)) }
+        : pageItem)
+      return { notebook: { ...state.notebook, pages, updatedAt: Date.now() }, history: [...state.history, previousNotebook], future: [] }
+    })
+    setSelectedElementIds([])
+  }
 
   const beginImageCrop = () => {
     if (!selectedImage) return
@@ -5621,6 +5696,15 @@ function NoteCanvas({
         <button className="selection-rotate-handle" aria-label="Rotate selection" title="Rotate selection" onPointerDown={startSelectionRotate} onPointerMove={moveSelectionRotate} onPointerUp={finishSelectionRotate} onPointerCancel={finishSelectionRotate} />
         <button className="selection-resize-handle" aria-label="Resize selection" title="Resize selection" onPointerDown={startSelectionResize} onPointerMove={moveSelectionResize} onPointerUp={finishSelectionResize} onPointerCancel={finishSelectionResize} />
       </div>}
+      {(activeTool === 'select' || activeTool === 'lasso') && selectedBounds && !imageCropDraft && !isStickyDragging && <button
+        type="button"
+        className="selection-delete-button"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={deleteSelectedElements}
+        aria-label={`Delete ${selectedElementIds.length} selected ${selectedElementIds.length === 1 ? 'item' : 'items'}`}
+        title={`Delete ${selectedElementIds.length === 1 ? 'selection' : `${selectedElementIds.length} selected items`}`}
+        style={{ left: `${Math.max(4, Math.min(width - 96, selectedBounds.x + selectedBounds.width - 84)) / width * 100}%`, top: `${Math.max(4, selectedBounds.y - 48) / height * 100}%` }}
+      ><Trash2 size={16} /><span>Delete</span></button>}
       {(activeTool === 'select' || activeTool === 'lasso') && selectedImage && selectedBounds && !imageCropDraft && <div
         className="image-edit-toolbar"
         onPointerDown={(event) => event.stopPropagation()}
@@ -6351,7 +6435,7 @@ function NoteCanvas({
               top: `${
                 (textPosition.y / height) * 100
               }%`,
-              width: '400px',
+              width: `${textBoxWidth}px`,
               minHeight: '40px',
               maxWidth: `calc(100% - ${
                 (textPosition.x / width) * 100
