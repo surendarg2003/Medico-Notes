@@ -23,14 +23,29 @@ function PdfPageImage({
   onText,
 }: PdfPageImageProps) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const [isCoarsePointer, setIsCoarsePointer] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches,
+  )
   const [isNearViewport, setIsNearViewport] = useState(() => typeof IntersectionObserver === 'undefined')
   const [renderedPage, setRenderedPage] = useState<{ key: string; url: string } | null>(null)
   const [failedPageKey, setFailedPageKey] = useState<string | null>(null)
   const reportText = useEffectEvent((text: string) => onText?.(text))
-  const pageKey = `${assetId}:${pageNumber}:${maxDimension}:${extractText}`
+  const renderDimension = isCoarsePointer && maxDimension > 300
+    ? Math.min(maxDimension, maxDimension > 1000 ? 2000 : 700)
+    : maxDimension
+  const renderPixelBudget = isCoarsePointer ? 4_500_000 : 8_500_000
+  const pageKey = `${assetId}:${pageNumber}:${renderDimension}:${renderPixelBudget}:${extractText}`
   const shouldLoad = enabled || isNearViewport
   const imageUrl = renderedPage?.key === pageKey ? renderedPage.url : null
   const failed = failedPageKey === pageKey
+
+  useEffect(() => {
+    const query = window.matchMedia('(pointer: coarse)')
+    const updatePointerMode = () => setIsCoarsePointer(query.matches)
+    updatePointerMode()
+    query.addEventListener('change', updatePointerMode)
+    return () => query.removeEventListener('change', updatePointerMode)
+  }, [])
 
   useEffect(() => {
     const host = hostRef.current
@@ -51,7 +66,14 @@ function PdfPageImage({
     let cancelled = false
     let ownedUrl: string | null = null
 
-    void renderPdfPageImage(assetId, pageNumber, maxDimension, extractText, priority).then((result) => {
+    void renderPdfPageImage(
+      assetId,
+      pageNumber,
+      renderDimension,
+      extractText,
+      priority,
+      renderPixelBudget,
+    ).then((result) => {
       if (cancelled) {
         URL.revokeObjectURL(result.url)
         return
@@ -67,7 +89,7 @@ function PdfPageImage({
       cancelled = true
       if (ownedUrl) URL.revokeObjectURL(ownedUrl)
     }
-  }, [assetId, enabled, extractText, isNearViewport, maxDimension, pageNumber, pageKey, priority, shouldLoad])
+  }, [assetId, enabled, extractText, isNearViewport, pageNumber, pageKey, priority, renderDimension, renderPixelBudget, shouldLoad])
 
   return (
     <div ref={hostRef} className={`pdf-page-image ${className}`} aria-busy={shouldLoad && !imageUrl && !failed}>

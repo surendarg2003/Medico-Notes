@@ -5,6 +5,12 @@ const STORE_NAME = 'pdf-files'
 const MAX_OPEN_DOCUMENTS = 2
 const MAX_CONCURRENT_PAGE_RENDERS = 2
 
+function getMaxConcurrentPageRenders() {
+  return typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+    ? 1
+    : MAX_CONCURRENT_PAGE_RENDERS
+}
+
 interface QueuedPageRender<T> {
   priority: boolean
   render: () => Promise<T>
@@ -24,7 +30,7 @@ const pageRenderQueue: QueuedPageRender<unknown>[] = []
 let activePageRenders = 0
 
 function pumpPageRenderQueue() {
-  while (activePageRenders < MAX_CONCURRENT_PAGE_RENDERS && pageRenderQueue.length > 0) {
+  while (activePageRenders < getMaxConcurrentPageRenders() && pageRenderQueue.length > 0) {
     const queued = pageRenderQueue.shift()!
     activePageRenders += 1
     void queued.render().then(queued.resolve, queued.reject).finally(() => {
@@ -164,13 +170,14 @@ export async function renderPdfPageImage(
   maxDimension = 2800,
   extractText = false,
   priority = false,
+  maxPixelCount = 8_500_000,
 ): Promise<{ url: string; text: string }> {
   return schedulePageRender(async () => {
     const pdf = await loadPdfDocument(assetId)
     const page = await pdf.getPage(pageNumber)
     const pageWidth = Math.abs(page.view[2] - page.view[0])
     const pageHeight = Math.abs(page.view[3] - page.view[1])
-    const pixelBudgetScale = Math.sqrt(8_500_000 / (pageWidth * pageHeight))
+    const pixelBudgetScale = Math.sqrt(maxPixelCount / (pageWidth * pageHeight))
     const viewport = page.getViewport({
       scale: Math.min(maxDimension / Math.max(pageWidth, pageHeight), pixelBudgetScale),
     })

@@ -186,6 +186,44 @@ function drawStroke(
   context.restore()
 }
 
+function drawLiveStrokeSegments(
+  context: CanvasRenderingContext2D,
+  points: Point[],
+  renderedSegmentCount: number,
+  color: string,
+  width: number,
+  opacity: number,
+) {
+  if (points.length < 2) return renderedSegmentCount
+
+  context.save()
+  context.beginPath()
+  context.strokeStyle = color
+  context.globalAlpha = opacity
+  context.lineCap = 'round'
+  context.lineJoin = 'round'
+  context.lineWidth = width
+
+  const firstPoint = renderedSegmentCount > 0
+    ? {
+        x: (points[renderedSegmentCount - 1].x + points[renderedSegmentCount].x) / 2,
+        y: (points[renderedSegmentCount - 1].y + points[renderedSegmentCount].y) / 2,
+      }
+    : points[0]
+  context.moveTo(firstPoint.x, firstPoint.y)
+
+  for (let index = renderedSegmentCount; index < points.length - 1; index += 1) {
+    const current = points[index]
+    const next = points[index + 1]
+    const midpoint = { x: (current.x + next.x) / 2, y: (current.y + next.y) / 2 }
+    context.quadraticCurveTo(current.x, current.y, midpoint.x, midpoint.y)
+  }
+
+  context.stroke()
+  context.restore()
+  return points.length - 1
+}
+
 function traceSmoothStroke(
   context: CanvasRenderingContext2D,
   points: Point[],
@@ -3166,19 +3204,16 @@ function NoteCanvas({
             strokeOpacity = Math.min(opacity, 0.3)
           }
 
-          // Rebuild the preview from one smoothed path. Incremental segments
-          // leave visible caps and seams between animation frames on stylus ink.
-          context.clearRect(0, 0, width, height)
-          drawStroke(context, {
-            id: 'live-stroke-preview',
-            type: 'stroke',
-            points: currentPointsRef.current,
+          // Draw only new curve segments. Rebuilding the entire stroke on every
+          // frame made long Apple Pencil strokes increasingly expensive.
+          liveRenderedPointCountRef.current = drawLiveStrokeSegments(
+            context,
+            currentPointsRef.current,
+            liveRenderedPointCountRef.current,
             color,
-            width: strokeWidth,
-            opacity: strokeOpacity,
-            tool: activeTool as StrokeElement['tool'],
-          })
-          liveRenderedPointCountRef.current = currentPointsRef.current.length
+            strokeWidth,
+            strokeOpacity,
+          )
         })
       }
 
@@ -5490,7 +5525,9 @@ function NoteCanvas({
       className={`note-canvas-container ${
         activeTool === 'text'
           ? 'note-canvas-text-mode'
-          : activeTool === 'laser' ? 'note-canvas-laser-mode' : ''
+          : activeTool === 'laser'
+            ? 'note-canvas-laser-mode'
+            : activeTool === 'select' ? 'note-canvas-scroll-mode' : ''
       }`}
     >
       <div

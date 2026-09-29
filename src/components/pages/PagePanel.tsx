@@ -121,7 +121,7 @@ function PagePanel() {
                 enabled={renderCanvas}
                 maxDimension={pageItem.id === activePageId ? 2800 : 1000}
                 priority={pageItem.id === activePageId}
-                extractText
+                extractText={pageItem.id === activePageId}
                 className="note-page-pdf-background"
                 onText={(text) => {
                   if (pageItem.pdfText === text) return
