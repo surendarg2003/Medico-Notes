@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useDocumentStore } from '../../stores/documentStore'
 import { usePageStore } from '../../stores/pageStore'
 import NoteCanvas from '../../canvas/NoteCanvas'
@@ -10,6 +10,8 @@ function PagePanel() {
   const activePageId = usePageStore((state) => state.activePageId)
   const setActivePage = usePageStore((state) => state.setActivePage)
   const pagePanelRef = useRef<HTMLDivElement>(null)
+  const touchScrollPointersRef = useRef(new Map<number, number>())
+  const lastTouchScrollYRef = useRef<number | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(() =>
     document.documentElement.classList.contains('app-note-focus'),
   )
@@ -70,6 +72,61 @@ function PagePanel() {
 
   const page = notebook.pages.find((item) => item.id === activePageId) ?? notebook.pages[0]
   const activeIndex = Math.max(0, notebook.pages.findIndex((item) => item.id === page.id))
+
+  const handleTouchScrollStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (
+      !isFullscreen ||
+      event.pointerType !== 'touch' ||
+      !window.matchMedia('(pointer: coarse)').matches ||
+      !(event.target instanceof HTMLCanvasElement)
+    ) return
+
+    // Fullscreen tablet gestures belong to the document scroller. Apple Pencil
+    // events remain handled by NoteCanvas because they use pointerType "pen".
+    event.preventDefault()
+    event.stopPropagation()
+    touchScrollPointersRef.current.set(event.pointerId, event.clientY)
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch {
+      // Some Safari versions can decline capture during a multi-touch gesture;
+      // the touch pointer continues to bubble through this panel normally.
+    }
+
+    if (touchScrollPointersRef.current.size >= 2) {
+      const pointers = [...touchScrollPointersRef.current.values()]
+      lastTouchScrollYRef.current = pointers.reduce((sum, pointer) => sum + pointer, 0) / pointers.length
+    }
+  }
+
+  const handleTouchScrollMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pointers = touchScrollPointersRef.current
+    if (!isFullscreen || event.pointerType !== 'touch' || !pointers.has(event.pointerId)) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    pointers.set(event.pointerId, event.clientY)
+    if (pointers.size < 2) return
+
+    const midpointY = [...pointers.values()].reduce((sum, pointer) => sum + pointer, 0) / pointers.size
+    if (lastTouchScrollYRef.current !== null) {
+      event.currentTarget.scrollTop -= midpointY - lastTouchScrollYRef.current
+    }
+    lastTouchScrollYRef.current = midpointY
+  }
+
+  const handleTouchScrollEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pointers = touchScrollPointersRef.current
+    if (event.pointerType !== 'touch' || !pointers.has(event.pointerId)) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    pointers.delete(event.pointerId)
+    if (pointers.size < 2) lastTouchScrollYRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
 
   const renderPage = (
     pageItem: (typeof notebook.pages)[number],
@@ -152,7 +209,14 @@ function PagePanel() {
 
   if (isFullscreen) {
     return (
-      <div className="page-panel page-panel-scroll-mode" ref={pagePanelRef}>
+      <div
+        className="page-panel page-panel-scroll-mode"
+        ref={pagePanelRef}
+        onPointerDownCapture={handleTouchScrollStart}
+        onPointerMoveCapture={handleTouchScrollMove}
+        onPointerUpCapture={handleTouchScrollEnd}
+        onPointerCancelCapture={handleTouchScrollEnd}
+      >
         {notebook.pages.map((pageItem, index) => (
           <section
             key={pageItem.id}
