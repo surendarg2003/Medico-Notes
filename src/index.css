@@ -1455,7 +1455,11 @@ html.app-fullscreen-fallback .app-shell {
 }
 
 .page-list-scroll-with-pdf {
-  flex: 0 1 auto;
+  /* Keep ordinary pages visible when a notebook also contains imported PDF
+     pages. Without a bounded share, this flex child can collapse to a thin
+     strip while the PDF list takes the entire navigator. */
+  flex: 0 1 38%;
+  min-height: 96px;
 }
 
 .page-list {
@@ -2406,6 +2410,10 @@ html.app-fullscreen-fallback .app-shell {
   letter-spacing: -0.02em;
 }
 
+.toolbar-mobile-fullscreen {
+  display: none;
+}
+
 .toolbar-button {
   width: 34px;
   height: 34px;
@@ -2562,6 +2570,17 @@ html.app-fullscreen-fallback .app-shell {
   .top-toolbar .drawing-tools {
     gap: 3px;
     margin-left: 4px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .toolbar-mobile-fullscreen {
+    display: inline-flex;
+    flex: 0 0 44px;
+  }
+
+  .toolbar-desktop-fullscreen {
+    display: none;
   }
 }
 

@@ -307,6 +307,15 @@ function TopToolbar() {
   return (
     <header className={`top-toolbar${isFullscreen ? ' top-toolbar-fullscreen' : ''}`}>
       <div className="toolbar-left">
+        <button
+          type="button"
+          className="toolbar-button toolbar-mobile-fullscreen"
+          onClick={() => void toggleFullscreen()}
+          aria-label={isFullscreen ? 'Exit full screen' : 'Enter full screen'}
+          title={isFullscreen ? 'Exit full screen' : 'Full screen'}
+        >
+          {isFullscreen ? <Minimize2 size={18} /> : <Expand size={18} />}
+        </button>
         <button className="toolbar-note-selector" onClick={() => {
           if (!notebook) return
           const title = window.prompt('Rename notebook', notebook.title)?.trim()
@@ -578,7 +587,7 @@ function TopToolbar() {
 
       <div className="toolbar-right">
         <button
-          className="toolbar-button"
+          className="toolbar-button toolbar-desktop-fullscreen"
           onClick={() => void toggleFullscreen()}
           aria-label={isFullscreen ? 'Exit full screen' : 'Enter full screen'}
           title={isFullscreen ? 'Exit full screen' : 'Full screen'}

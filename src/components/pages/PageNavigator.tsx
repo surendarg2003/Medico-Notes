@@ -495,6 +495,15 @@ function PageNavigator() {
     )
   }
 
+  const hasPdfPages = notebook.pages.some((item) => {
+    const pdfPage = item as Page & PdfPageLike
+    return Boolean(pdfPage.pdfBackground || pdfPage.pdfAssetId)
+  })
+  const hasRegularPages = notebook.pages.some((item) => {
+    const pdfPage = item as Page & PdfPageLike
+    return !pdfPage.pdfBackground && !pdfPage.pdfAssetId
+  })
+
   const selectedPdfCount =
     selectedPageIds.filter((id) => {
       const page = notebook.pages.find(
@@ -696,7 +705,7 @@ function PageNavigator() {
         </div>
       )}
 
-      <div className={`page-list-scroll ${notebook.pages.some((page) => { const pdfPage = page as typeof page & PdfPageLike; return Boolean(pdfPage.pdfBackground || pdfPage.pdfAssetId) }) ? 'page-list-scroll-with-pdf' : ''}`}>
+      <div className={`page-list-scroll ${hasPdfPages && hasRegularPages ? 'page-list-scroll-with-pdf' : ''}`}>
         <div className="page-list">
           {notebook.pages
             .map((page, index) => ({ page, index }))
@@ -860,10 +869,7 @@ function PageNavigator() {
         </div>
       </div>
 
-      {notebook.pages.some((page) => {
-        const pdfPage = page as typeof page & PdfPageLike
-        return Boolean(pdfPage.pdfBackground || pdfPage.pdfAssetId)
-      }) && (
+      {hasPdfPages && (
         <div className="pdf-pages-section">
           <div className="pdf-pages-title">
             <FileText size={11} />

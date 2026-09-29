@@ -179,6 +179,10 @@ export async function renderPdfPageImage(
     canvas.height = Math.ceil(viewport.height)
     const context = canvas.getContext('2d')
     if (!context) throw new Error('Unable to render this PDF page.')
+    // Lossy JPEG turns small PDF glyphs soft, especially when the page is
+    // zoomed on a Retina display. Keep thumbnails compact, but preserve the
+    // full-resolution page image losslessly.
+    const imageType = maxDimension > 1000 ? 'image/png' : 'image/jpeg'
 
     try {
       const [blob, textContent] = await Promise.all([
@@ -186,7 +190,8 @@ export async function renderPdfPageImage(
           new Promise<Blob>((resolve, reject) => {
             canvas.toBlob((image) => image
               ? resolve(image)
-              : reject(new Error('Unable to encode this PDF page.')), 'image/jpeg', 0.92)
+              : reject(new Error('Unable to encode this PDF page.')), imageType,
+              imageType === 'image/jpeg' ? 0.92 : undefined)
           }),
         ),
         // Text indexing is optional. A damaged or unsupported text layer must

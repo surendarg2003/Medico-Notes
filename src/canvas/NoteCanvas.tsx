@@ -1153,15 +1153,14 @@ function NoteCanvas({
     let assetSaved = false
     let documentRegistered = false
     try {
-      // Start durable storage, PDF.js loading, and byte reading together so a
-      // large file does not pay for these independent steps one after another.
+      // Start the durable write immediately, but do not wait for IndexedDB
+      // before starting PDF.js. On iPad, persisting a large Blob can take long
+      // enough to make parsing feel like a second, serial upload step.
       pdfSaveTask = savePdfAsset(pdfAssetId, file)
       const [pdfjsLib, fileData] = await Promise.all([
         import('pdfjs-dist'),
         file.arrayBuffer(),
       ])
-      await pdfSaveTask
-      assetSaved = true
 
       pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
         'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -1171,7 +1170,11 @@ function NoteCanvas({
       pdfLoadingTask = pdfjsLib.getDocument({
         data: new Uint8Array(fileData),
       })
-      const pdf = await pdfLoadingTask.promise
+      // Parse the PDF in its worker while IndexedDB stores the original file.
+      // Waiting for both keeps the notebook from referencing an unsaved asset,
+      // while allowing the two expensive operations to use the same time.
+      const [pdf] = await Promise.all([pdfLoadingTask.promise, pdfSaveTask])
+      assetSaved = true
       registerPdfDocument(pdfAssetId, pdf, pdfLoadingTask)
       documentRegistered = true
 
