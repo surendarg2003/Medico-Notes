@@ -24,23 +24,23 @@ function PdfPageImage({
 }: PdfPageImageProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [isCoarsePointer, setIsCoarsePointer] = useState(() =>
-    typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches,
+    typeof window !== 'undefined' && window.matchMedia('(any-pointer: coarse)').matches,
   )
   const [isNearViewport, setIsNearViewport] = useState(() => typeof IntersectionObserver === 'undefined')
   const [renderedPage, setRenderedPage] = useState<{ key: string; url: string } | null>(null)
   const [failedPageKey, setFailedPageKey] = useState<string | null>(null)
   const reportText = useEffectEvent((text: string) => onText?.(text))
   const renderDimension = isCoarsePointer && maxDimension > 300
-    ? Math.min(maxDimension, maxDimension > 1000 ? 2000 : 700)
+    ? Math.min(maxDimension, maxDimension > 1000 ? 1600 : 600)
     : maxDimension
-  const renderPixelBudget = isCoarsePointer ? 4_500_000 : 8_500_000
+  const renderPixelBudget = isCoarsePointer ? 3_000_000 : 8_500_000
   const pageKey = `${assetId}:${pageNumber}:${renderDimension}:${renderPixelBudget}:${extractText}`
   const shouldLoad = enabled || isNearViewport
   const imageUrl = renderedPage?.key === pageKey ? renderedPage.url : null
   const failed = failedPageKey === pageKey
 
   useEffect(() => {
-    const query = window.matchMedia('(pointer: coarse)')
+    const query = window.matchMedia('(any-pointer: coarse)')
     const updatePointerMode = () => setIsCoarsePointer(query.matches)
     updatePointerMode()
     query.addEventListener('change', updatePointerMode)

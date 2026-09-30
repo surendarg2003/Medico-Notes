@@ -197,7 +197,7 @@ function PagePanel() {
             data-note-page-id={pageItem.id}
             aria-label={pageItem.title}
           >
-            {renderPage(pageItem, Math.abs(index - activeIndex) <= 1)}
+            {renderPage(pageItem, index === activeIndex)}
           </section>
         ))}
       </div>
