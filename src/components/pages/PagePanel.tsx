@@ -10,12 +10,6 @@ function PagePanel() {
   const activePageId = usePageStore((state) => state.activePageId)
   const setActivePage = usePageStore((state) => state.setActivePage)
   const pagePanelRef = useRef<HTMLDivElement>(null)
-  const lastTouchScrollYRef = useRef<number | null>(null)
-  const lastTouchScrollSampleRef = useRef<{ y: number; time: number } | null>(null)
-  const pendingTouchScrollDeltaRef = useRef(0)
-  const touchScrollFrameRef = useRef<number | null>(null)
-  const touchScrollVelocityRef = useRef(0)
-  const touchInertiaFrameRef = useRef<number | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(() =>
     document.documentElement.classList.contains('app-note-focus'),
   )
@@ -30,113 +24,6 @@ function PagePanel() {
     updateFullscreen()
     return () => observer.disconnect()
   }, [])
-
-  useEffect(() => {
-    if (!isFullscreen || !window.matchMedia('(any-pointer: coarse)').matches) return
-    const panel = pagePanelRef.current
-    if (!panel) return
-
-    const getMidpointY = (touches: TouchList) => {
-      let total = 0
-      for (let index = 0; index < touches.length; index += 1) total += touches[index].clientY
-      return total / touches.length
-    }
-    const isCanvasTouch = (event: TouchEvent) =>
-      event.target instanceof Element && Boolean(event.target.closest('.note-canvas-container'))
-
-    const handleTouchStart = (event: TouchEvent) => {
-      if (!isCanvasTouch(event) || event.touches.length < 2) return
-      if (touchInertiaFrameRef.current !== null) {
-        cancelAnimationFrame(touchInertiaFrameRef.current)
-        touchInertiaFrameRef.current = null
-      }
-      touchScrollVelocityRef.current = 0
-      lastTouchScrollYRef.current = getMidpointY(event.touches)
-      lastTouchScrollSampleRef.current = {
-        y: lastTouchScrollYRef.current,
-        time: event.timeStamp,
-      }
-      event.preventDefault()
-    }
-    const handleTouchMove = (event: TouchEvent) => {
-      if (!isCanvasTouch(event) || event.touches.length < 2) return
-      event.preventDefault()
-      const midpointY = getMidpointY(event.touches)
-      if (lastTouchScrollYRef.current !== null) {
-        pendingTouchScrollDeltaRef.current += lastTouchScrollYRef.current - midpointY
-        const sample = lastTouchScrollSampleRef.current
-        const elapsed = sample ? event.timeStamp - sample.time : 0
-        if (elapsed > 0) {
-          const instantVelocity = Math.max(-2.5, Math.min(2.5, (sample!.y - midpointY) / elapsed))
-          touchScrollVelocityRef.current =
-            touchScrollVelocityRef.current * 0.65 + instantVelocity * 0.35
-        }
-        if (touchScrollFrameRef.current === null) {
-          touchScrollFrameRef.current = requestAnimationFrame(() => {
-            panel.scrollTop += pendingTouchScrollDeltaRef.current
-            pendingTouchScrollDeltaRef.current = 0
-            touchScrollFrameRef.current = null
-          })
-        }
-      }
-      lastTouchScrollYRef.current = midpointY
-      lastTouchScrollSampleRef.current = { y: midpointY, time: event.timeStamp }
-    }
-    const handleTouchEnd = (event: TouchEvent) => {
-      if (event.touches.length >= 2) {
-        lastTouchScrollYRef.current = getMidpointY(event.touches)
-        lastTouchScrollSampleRef.current = {
-          y: lastTouchScrollYRef.current,
-          time: event.timeStamp,
-        }
-        return
-      }
-
-      lastTouchScrollYRef.current = null
-      lastTouchScrollSampleRef.current = null
-      if (touchScrollFrameRef.current !== null) {
-        cancelAnimationFrame(touchScrollFrameRef.current)
-        touchScrollFrameRef.current = null
-      }
-      panel.scrollTop += pendingTouchScrollDeltaRef.current
-      pendingTouchScrollDeltaRef.current = 0
-
-      let previousTime = performance.now()
-      const continueScrolling = (time: number) => {
-        const elapsed = Math.min(32, time - previousTime)
-        previousTime = time
-        panel.scrollTop += touchScrollVelocityRef.current * elapsed
-        touchScrollVelocityRef.current *= Math.pow(0.92, elapsed / 16.67)
-        if (Math.abs(touchScrollVelocityRef.current) < 0.025) {
-          touchInertiaFrameRef.current = null
-          touchScrollVelocityRef.current = 0
-          return
-        }
-        touchInertiaFrameRef.current = requestAnimationFrame(continueScrolling)
-      }
-      if (Math.abs(touchScrollVelocityRef.current) >= 0.025) {
-        touchInertiaFrameRef.current = requestAnimationFrame(continueScrolling)
-      }
-    }
-
-    panel.addEventListener('touchstart', handleTouchStart, { passive: false })
-    panel.addEventListener('touchmove', handleTouchMove, { passive: false })
-    panel.addEventListener('touchend', handleTouchEnd, { passive: true })
-    panel.addEventListener('touchcancel', handleTouchEnd, { passive: true })
-    return () => {
-      panel.removeEventListener('touchstart', handleTouchStart)
-      panel.removeEventListener('touchmove', handleTouchMove)
-      panel.removeEventListener('touchend', handleTouchEnd)
-      panel.removeEventListener('touchcancel', handleTouchEnd)
-      if (touchScrollFrameRef.current !== null) cancelAnimationFrame(touchScrollFrameRef.current)
-      if (touchInertiaFrameRef.current !== null) cancelAnimationFrame(touchInertiaFrameRef.current)
-      touchScrollFrameRef.current = null
-      touchInertiaFrameRef.current = null
-      pendingTouchScrollDeltaRef.current = 0
-      touchScrollVelocityRef.current = 0
-      lastTouchScrollYRef.current = null
-    }
-  }, [isFullscreen])
 
   useEffect(() => {
     if (!notebook || notebook.pages.length === 0) return
