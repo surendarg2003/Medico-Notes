@@ -1301,15 +1301,6 @@ html.app-note-focus .note-canvas {
   touch-action: none;
 }
 
-/* In Select mode, use a finger to scroll the document on tablets while the
-   stylus continues to draw with the active writing tool. */
-@media (pointer: coarse) {
-  .note-canvas-scroll-mode .note-canvas,
-  html.app-note-focus .note-canvas-scroll-mode .note-canvas {
-    touch-action: pan-y pinch-zoom;
-  }
-}
-
 html.app-note-focus .page-action-buttons {
   display: none;
 }

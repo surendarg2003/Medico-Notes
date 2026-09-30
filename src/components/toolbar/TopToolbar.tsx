@@ -349,8 +349,8 @@ function TopToolbar() {
           <button
             className={`toolbar-button ${activeTool === 'select' ? 'toolbar-button-active' : ''}`}
             onClick={() => setActiveTool('select')}
-            aria-label="Select and move elements; swipe to scroll on touch screens"
-            title="Select and move elements · swipe to scroll on tablets"
+            aria-label="Select and move elements; use two fingers to scroll on tablets"
+            title="Select and move elements · two-finger PDF scroll on tablets"
           >
             <MousePointer2 size={18} />
           </button>
