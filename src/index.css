@@ -1304,6 +1304,10 @@ html.app-note-focus .note-canvas {
 /* Let iOS scroll this overflow panel on its compositor. Touch pointers are
    ignored by the drawing canvas in fullscreen; Apple Pencil uses pen events. */
 @media (any-pointer: coarse) {
+  html.app-note-focus .page-panel-scroll-mode {
+    touch-action: pan-y;
+  }
+
   html.app-note-focus .note-canvas {
     touch-action: pan-y;
   }

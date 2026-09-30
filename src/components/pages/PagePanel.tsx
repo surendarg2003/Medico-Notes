@@ -10,6 +10,7 @@ function PagePanel() {
   const activePageId = usePageStore((state) => state.activePageId)
   const setActivePage = usePageStore((state) => state.setActivePage)
   const pagePanelRef = useRef<HTMLDivElement>(null)
+  const activePageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(() =>
     document.documentElement.classList.contains('app-note-focus'),
   )
@@ -37,21 +38,40 @@ function PagePanel() {
     const panel = pagePanelRef.current
     if (!panel) return
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const mostVisible = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0]
-        const pageId = mostVisible?.target.getAttribute('data-note-page-id')
-        if (pageId && mostVisible.intersectionRatio >= 0.4) setActivePage(pageId)
-      },
-      { root: panel, threshold: [0.25, 0.4, 0.6, 0.8] },
-    )
+    const updateActivePageAfterScroll = () => {
+      if (activePageTimerRef.current) clearTimeout(activePageTimerRef.current)
+      activePageTimerRef.current = setTimeout(() => {
+        const panelRect = panel.getBoundingClientRect()
+        let mostVisiblePageId: string | null = null
+        let greatestVisibleArea = 0
 
-    panel.querySelectorAll<HTMLElement>('[data-note-page-id]').forEach((page) =>
-      observer.observe(page),
-    )
-    return () => observer.disconnect()
+        panel.querySelectorAll<HTMLElement>('[data-note-page-id]').forEach((page) => {
+          const rect = page.getBoundingClientRect()
+          const visibleHeight = Math.max(
+            0,
+            Math.min(rect.bottom, panelRect.bottom) - Math.max(rect.top, panelRect.top),
+          )
+          const visibleArea = visibleHeight * Math.max(0, Math.min(rect.right, panelRect.right) - Math.max(rect.left, panelRect.left))
+          if (visibleArea > greatestVisibleArea) {
+            greatestVisibleArea = visibleArea
+            mostVisiblePageId = page.getAttribute('data-note-page-id')
+          }
+        })
+
+        // Keep page/canvas mounting out of the active scroll gesture. Updating
+        // this only after scroll events settle prevents React work from
+        // interrupting Safari's compositor-driven PDF scrolling on iPad.
+        if (mostVisiblePageId) setActivePage(mostVisiblePageId)
+        activePageTimerRef.current = null
+      }, 140)
+    }
+
+    panel.addEventListener('scroll', updateActivePageAfterScroll, { passive: true })
+    return () => {
+      panel.removeEventListener('scroll', updateActivePageAfterScroll)
+      if (activePageTimerRef.current) clearTimeout(activePageTimerRef.current)
+      activePageTimerRef.current = null
+    }
   }, [isFullscreen, notebook?.id, notebook?.pages.length, setActivePage])
 
   useEffect(() => {
@@ -79,8 +99,8 @@ function PagePanel() {
       !(event.target instanceof HTMLCanvasElement)
     ) return
 
-    // Do not let a finger begin a stroke in fullscreen. Native touch events
-    // below own two-finger scrolling; Apple Pencil remains a pointerType "pen".
+    // Do not let a finger begin a stroke in fullscreen. Safari handles scrolling
+    // natively; Apple Pencil remains a pointerType "pen" and can still write.
     event.stopPropagation()
   }
 
