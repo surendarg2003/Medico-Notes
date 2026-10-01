@@ -256,24 +256,41 @@ function PageThumbnail({
   const [title, setTitle] = useState(page.title)
 
   const inputRef = useRef<HTMLInputElement>(null)
+  const thumbnailRef = useRef<HTMLDivElement>(null)
+  const [isNearViewport, setIsNearViewport] = useState(
+    () => !('IntersectionObserver' in window) || isActive,
+  )
 
   const pdfPage = page as Page & PdfPageLike
   const isPdfPage = Boolean(pdfPage.pdfBackground || pdfPage.pdfAssetId)
+  const shouldRenderPreview = isActive || isNearViewport
 
-  const strokes = page.elements.filter(
+  const strokes = shouldRenderPreview ? page.elements.filter(
     (element): element is StrokeElement =>
       element.type === 'stroke',
-  )
+  ) : []
 
-  const shapes = page.elements.filter(
+  const shapes = shouldRenderPreview ? page.elements.filter(
     (element): element is ShapeElement =>
       element.type === 'shape',
-  )
+  ) : []
 
-  const texts = page.elements.filter(
+  const texts = shouldRenderPreview ? page.elements.filter(
     (element): element is TextElement =>
       element.type === 'text',
-  )
+  ) : []
+
+  useEffect(() => {
+    const thumbnail = thumbnailRef.current
+    if (!thumbnail || !('IntersectionObserver' in window)) return
+
+    const observer = new IntersectionObserver(
+      ([entry]) => setIsNearViewport(entry.isIntersecting),
+      { rootMargin: '300px' },
+    )
+    observer.observe(thumbnail)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     if (editing) {
@@ -317,7 +334,7 @@ function PageThumbnail({
   }
 
   return (
-    <div className="page-thumbnail-wrapper">
+    <div className="page-thumbnail-wrapper" ref={thumbnailRef}>
       <button
         className={`page-thumbnail ${
           isActive ? 'page-thumbnail-active' : ''
@@ -361,66 +378,68 @@ function PageThumbnail({
             />
           )}
 
-          <svg
-            viewBox="0 0 760 900"
-            preserveAspectRatio="none"
-            className="page-thumbnail-canvas"
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              zIndex: 1,
-              pointerEvents: 'none',
-              overflow: 'hidden',
-            }}
-          >
-            <defs>
-              <clipPath
-                id={`page-thumbnail-clip-${page.id}`}
-                clipPathUnits="userSpaceOnUse"
-              >
-                <rect
-                  x="0"
-                  y="0"
-                  width="760"
-                  height="900"
-                />
-              </clipPath>
-            </defs>
-
-            <g
-              clipPath={`url(#page-thumbnail-clip-${page.id})`}
+          {shouldRenderPreview && (
+            <svg
+              viewBox="0 0 760 900"
+              preserveAspectRatio="none"
+              className="page-thumbnail-canvas"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                zIndex: 1,
+                pointerEvents: 'none',
+                overflow: 'hidden',
+              }}
             >
-              {strokes.map((stroke) => (
-                <path
-                  key={stroke.id}
-                  d={getStrokePath(stroke)}
-                  fill="none"
-                  stroke={stroke.color}
-                  strokeWidth={stroke.width}
-                  strokeOpacity={stroke.opacity}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              ))}
+              <defs>
+                <clipPath
+                  id={`page-thumbnail-clip-${page.id}`}
+                  clipPathUnits="userSpaceOnUse"
+                >
+                  <rect
+                    x="0"
+                    y="0"
+                    width="760"
+                    height="900"
+                  />
+                </clipPath>
+              </defs>
 
-              {shapes.map((shape) =>
-                renderShape(
-                  shape as ShapeElement & {
-                    lineStyle?:
-                      | 'solid'
-                      | 'dashed'
-                      | 'dotted'
-                  },
-                ),
-              )}
+              <g
+                clipPath={`url(#page-thumbnail-clip-${page.id})`}
+              >
+                {strokes.map((stroke) => (
+                  <path
+                    key={stroke.id}
+                    d={getStrokePath(stroke)}
+                    fill="none"
+                    stroke={stroke.color}
+                    strokeWidth={stroke.width}
+                    strokeOpacity={stroke.opacity}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                ))}
 
-              {texts.map((text) =>
-                renderText(text),
-              )}
-            </g>
-          </svg>
+                {shapes.map((shape) =>
+                  renderShape(
+                    shape as ShapeElement & {
+                      lineStyle?:
+                        | 'solid'
+                        | 'dashed'
+                        | 'dotted'
+                    },
+                  ),
+                )}
+
+                {texts.map((text) =>
+                  renderText(text),
+                )}
+              </g>
+            </svg>
+          )}
 
           {isPdfPage && (
             <div

@@ -1810,7 +1810,11 @@ function NoteCanvas({
       // Keep page coordinates logical while rendering into a high-density
       // backing store. This prevents typed text and ink from looking soft on
       // Retina and other high-DPI tablet screens.
-      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2)
+      const hasCoarsePointer = window.matchMedia('(any-pointer: coarse)').matches
+      const pixelRatio = Math.min(
+        window.devicePixelRatio || 1,
+        hasCoarsePointer ? 1.5 : 2,
+      )
       const pixelWidth = Math.round(rect.width * pixelRatio)
       const pixelHeight = Math.round(rect.height * pixelRatio)
       const mainCanvasChanged = canvas.width !== pixelWidth || canvas.height !== pixelHeight
